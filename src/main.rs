@@ -1,21 +1,18 @@
-use tokio::io::AsyncReadExt;
 use::tokio::net::{TcpListener, TcpStream};
-use::tokio::io::AsyncWriteExt;
-use std::io; 
+use::tokio::io::{BufReader, AsyncBufReadExt, Result};
 const ADDR: &str = "127.0.0.1:6379";
-const READ_BUFFER_SIZE: usize = 1024;
 
-async fn handle_connection(mut socket: TcpStream) -> io::Result<()> {
-
-    loop {
-        let mut read_buffer: [u8; READ_BUFFER_SIZE] = [0; READ_BUFFER_SIZE];
-        socket.read_buf(read_buffer);
-
-    }
+async fn handle_connection(socket: TcpStream) -> tokio::io::Result<()> {
+    let mut lines = BufReader::new(socket).lines();
+    while let Some(command) = lines.next_line().await? {
+        println!("Command received: {}", command);
+    };
+    println!("Client closed connection");
+    Ok(())
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> Result<()> {
     let listener = TcpListener::bind(ADDR).await?;
 
     loop {
