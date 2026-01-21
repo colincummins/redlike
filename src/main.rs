@@ -1,5 +1,7 @@
+use redlike::connection::Connection;
 use::tokio::net::{TcpListener, TcpStream};
 use::tokio::io::{BufReader, AsyncBufReadExt, Result};
+use::redlike::store::Store;
 const ADDR: &str = "127.0.0.1:6379";
 
 async fn handle_connection(socket: TcpStream) -> tokio::io::Result<()> {
@@ -14,12 +16,12 @@ async fn handle_connection(socket: TcpStream) -> tokio::io::Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let listener = TcpListener::bind(ADDR).await?;
+    let store: Store;
 
     loop {
         match listener.accept().await {
             Ok((mut _socket, addr)) => {
                 println!("new client: {:?}", addr);
-                handle_connection(_socket).await?;
             },
             Err(e) => println!("client couldn't connect: {:?}", e)
         }
