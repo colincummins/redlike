@@ -17,7 +17,14 @@ enum Response {}
 
 impl Connection {
     pub fn new(stream: TcpStream, store: Store) -> Self {
-        unimplemented!("Connection constructor unimplemented");
+        let (reader, writer) = stream.into_split();
+        let reader = BufReader::new(reader);
+        let writer = BufWriter::new(writer);
+        Self {
+            reader,
+            writer,
+            store,
+        }
     }
     
     async fn read_command(&mut self) -> Result<Command, Error> {
