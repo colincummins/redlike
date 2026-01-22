@@ -1,1 +1,1 @@
-pub struct Store {}
+pub struct Store;
