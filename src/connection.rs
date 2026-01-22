@@ -1,9 +1,8 @@
-use std::io::Read;
-
 use tokio::io::{BufReader, BufWriter};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::store::Store;
+use crate::error::Error;
 
 pub struct Connection {
     reader: BufReader<OwnedReadHalf>,
@@ -13,11 +12,6 @@ pub struct Connection {
 
 enum Command {}
 
-enum ConnectionError {
-    ReadError,
-    ProcessError,
-    ResponseError
-}
 
 enum Response {}
 
@@ -26,15 +20,15 @@ impl Connection {
         unimplemented!("Connection constructor unimplemented");
     }
     
-    async fn read_command(&mut self) -> Result<Command, ConnectionError> {
+    async fn read_command(&mut self) -> Result<Command, Error> {
         unimplemented!("Read Command unimplemented");
     }
 
-    async fn process_command(&mut self, command: Command) -> Result<Response, ConnectionError> {
+    async fn process_command(&mut self, command: Command) -> Result<Response, Error> {
         unimplemented!("Process Command unimplemented");
     }
 
-    async fn send_response(&mut self, response: Response) -> Result<(), ConnectionError> {
+    async fn send_response(&mut self, response: Response) -> Result<(), Error> {
         unimplemented!("Send response unimplemented")
     }
 }
