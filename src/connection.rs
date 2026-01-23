@@ -27,15 +27,19 @@ impl Connection {
         }
     }
     
-    async fn read_command(&mut self) -> Result<Command, Error> {
+    fn read_command(&mut self) -> Result<Command, Error> {
         unimplemented!("Read Command unimplemented");
     }
 
-    async fn process_command(&mut self, command: Command) -> Result<Response, Error> {
+    fn process_command(&mut self, command: Command) -> Result<Response, Error> {
         unimplemented!("Process Command unimplemented");
     }
 
-    async fn send_response(&mut self, response: Response) -> Result<(), Error> {
+    fn send_response(&mut self, response: Response) -> Result<(), Error> {
         unimplemented!("Send response unimplemented")
+    }
+    
+    fn run(&mut self, response: Response) -> Result<(), Error> {
+        unimplemented!("run implemented")
     }
 }
