@@ -1,16 +1,22 @@
-use tokio::io::{BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::store::Store;
 use crate::error::Error;
 
 pub struct Connection {
-    reader: BufReader<OwnedReadHalf>,
+    reader: tokio::io::Lines<tokio::io::BufReader<OwnedReadHalf>>,
     writer: BufWriter<OwnedWriteHalf>,
     store: Store,
 }
 
-enum Command {}
+enum Command {
+    PING,
+    GET{key: String},
+    SET{key: String, value: String},
+    DEL{key: String},
+    QUIT,
+}
 
 
 enum Response {}
@@ -18,7 +24,7 @@ enum Response {}
 impl Connection {
     pub fn new(stream: TcpStream, store: Store) -> Self {
         let (reader, writer) = stream.into_split();
-        let reader = BufReader::new(reader);
+        let reader = BufReader::new(reader).lines();
         let writer = BufWriter::new(writer);
         Self {
             reader,
