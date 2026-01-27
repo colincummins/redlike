@@ -1,13 +1,11 @@
 #![allow(clippy::upper_case_acronyms)]
-use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
-use tokio::net::TcpStream;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncBufReadExt};
 use crate::store::Store;
 use crate::error::Error;
 
-pub struct Connection {
-    reader: BufReader<OwnedReadHalf>,
-    writer: BufWriter<OwnedWriteHalf>,
+pub struct Connection<R, W> {
+    reader: R,
+    writer: W,
     store: Store,
 }
 
@@ -23,19 +21,10 @@ enum Command {
 
 enum Response {}
 
-impl Connection {
-    pub fn new(stream: TcpStream, store: Store) -> Self {
-        let (reader, writer) = stream.into_split();
-        let reader = BufReader::new(reader);
-        let writer = BufWriter::new(writer);
-        Self {
-            reader,
-            writer,
-            store,
-        }
-    }
-    
-
+impl <R,W> Connection<R,W> where
+R: AsyncBufReadExt + Unpin,
+W: Unpin, 
+{
     #[allow(dead_code)]
     async fn read_command(&mut self) -> Result<Option<Command>, Error> {
         let mut line = String::new();
@@ -55,7 +44,6 @@ impl Connection {
             (_, _) => return Err(Error::UnknownCommand),
         }
 
-        Ok(None)
     }
 
     #[allow(dead_code)]
