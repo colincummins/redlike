@@ -2,10 +2,10 @@ use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::store::Store;
-use crate::error::Error;
+use crate::error::{Error, ProtocolError};
 
 pub struct Connection {
-    reader: tokio::io::Lines<tokio::io::BufReader<OwnedReadHalf>>,
+    reader: BufReader<OwnedReadHalf>,
     writer: BufWriter<OwnedWriteHalf>,
     store: Store,
 }
@@ -16,6 +16,7 @@ enum Command {
     SET{key: String, value: String},
     DEL{key: String},
     QUIT,
+    EMPTY
 }
 
 
@@ -24,7 +25,7 @@ enum Response {}
 impl Connection {
     pub fn new(stream: TcpStream, store: Store) -> Self {
         let (reader, writer) = stream.into_split();
-        let reader = BufReader::new(reader).lines();
+        let reader = BufReader::new(reader);
         let writer = BufWriter::new(writer);
         Self {
             reader,
@@ -33,8 +34,19 @@ impl Connection {
         }
     }
     
-    fn read_command(&mut self) -> Result<Command, Error> {
-        unimplemented!("Read Command unimplemented");
+    async fn read_command(&mut self) -> Result<Option<Command>, Error> {
+        let mut line = String::new();
+        
+        if self.reader.read_line(& mut line).await? == 0 {
+            return Ok(None)
+        };
+
+        let mut parts = line.split_whitespace();
+        let Some(c) = parts.next() else {
+            return Ok(Some(Command::EMPTY));
+        }
+
+        return Ok(None)
     }
 
     fn process_command(&mut self, command: Command) -> Result<Response, Error> {

@@ -12,7 +12,6 @@ impl From<tokio::io::Error> for Error {
 
 #[derive(Debug)]
 pub enum ProtocolError {
-    Empty,
     WrongArity,
     UnknownCommand
 }
