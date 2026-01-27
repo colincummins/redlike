@@ -1,14 +1,16 @@
 #![allow(clippy::upper_case_acronyms)]
-use tokio::io::{AsyncBufReadExt};
+use tokio::io::{AsyncBufReadExt, BufReader, AsyncRead, AsyncWrite, sink};
+use crate::connection;
 use crate::store::Store;
 use crate::error::Error;
 
 pub struct Connection<R, W> {
-    reader: R,
+    reader: BufReader<R>,
     writer: W,
     store: Store,
 }
 
+#[derive(PartialEq, Eq, Debug)]
 enum Command {
     PING,
     GET{key: String},
@@ -22,9 +24,16 @@ enum Command {
 enum Response {}
 
 impl <R,W> Connection<R,W> where
-R: AsyncBufReadExt + Unpin,
-W: Unpin, 
+R: AsyncRead + Unpin,
+W: AsyncWrite + Unpin, 
 {
+    fn new(reader: R, writer: W, store: Store) -> Self {
+        Connection {
+            reader: BufReader::new(reader),
+            writer,
+            store
+        }
+    }
     #[allow(dead_code)]
     async fn read_command(&mut self) -> Result<Option<Command>, Error> {
         let mut line = String::new();
@@ -39,9 +48,9 @@ W: Unpin,
         };
         let args: Vec<&str> = args.collect();
         match (c.to_ascii_uppercase().as_str(), args.as_slice()) {
-            ("PING", []) => return Ok(Some(Command::PING)),
-            ("PING", _) => return Err(Error::WrongArity { command: "PING".into(), given: 1, expected: 0 }),
-            (_, _) => return Err(Error::UnknownCommand),
+            ("PING", []) => Ok(Some(Command::PING)),
+            ("PING", _) => Err(Error::WrongArity { command: "PING".into(), given: 1, expected: 0 }),
+            (_, _) => Err(Error::UnknownCommand),
         }
 
     }
@@ -59,5 +68,22 @@ W: Unpin,
     #[allow(dead_code)] 
     fn run(&mut self, response: Response) -> Result<(), Error> {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncWriteExt, duplex};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn successful_ping () {
+        let (mut client, server) = duplex(64);
+        let store:Store = Default::default();
+        let mut connection: Connection<tokio::io::DuplexStream, _> = Connection::new(server, sink(), store);
+        client.write_all(b"PING\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::PING));
     }
 }
