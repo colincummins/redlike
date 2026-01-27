@@ -3,7 +3,7 @@ use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use crate::store::Store;
-use crate::error::{Error, ProtocolError};
+use crate::error::Error;
 
 pub struct Connection {
     reader: BufReader<OwnedReadHalf>,
@@ -35,6 +35,8 @@ impl Connection {
         }
     }
     
+
+    #[allow(dead_code)]
     async fn read_command(&mut self) -> Result<Option<Command>, Error> {
         let mut line = String::new();
         
@@ -49,22 +51,25 @@ impl Connection {
         let args: Vec<&str> = args.collect();
         match (c.to_ascii_uppercase().as_str(), args.as_slice()) {
             ("PING", []) => return Ok(Some(Command::PING)),
-            ("PING", _) => return Err(Error::Protocol(ProtocolError::WrongArity)),
-            (_, _) => return Err(Error::Protocol(ProtocolError::UnknownCommand)),
+            ("PING", _) => return Err(Error::WrongArity { command: "PING".into(), given: 1, expected: 0 }),
+            (_, _) => return Err(Error::UnknownCommand),
         }
 
         Ok(None)
     }
 
+    #[allow(dead_code)]
     fn process_command(&mut self, command: Command) -> Result<Response, Error> {
-        unimplemented!("Process Command unimplemented");
+        todo!()
     }
 
+    #[allow(dead_code)]
     fn send_response(&mut self, response: Response) -> Result<(), Error> {
-        unimplemented!("Send response unimplemented")
+        todo!()
     }
-    
+
+    #[allow(dead_code)] 
     fn run(&mut self, response: Response) -> Result<(), Error> {
-        unimplemented!("run implemented")
+        todo!()
     }
 }
