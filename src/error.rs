@@ -13,7 +13,7 @@ impl From<tokio::io::Error> for Error {
 #[derive(Debug)]
 pub enum ProtocolError {
     WrongArity,
-    UnknownCommand
+    UnknownCommand,
 }
 
 #[derive(Debug)]

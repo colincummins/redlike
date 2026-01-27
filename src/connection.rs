@@ -16,7 +16,7 @@ enum Command {
     SET{key: String, value: String},
     DEL{key: String},
     QUIT,
-    EMPTY
+    NOOP
 }
 
 
@@ -41,10 +41,16 @@ impl Connection {
             return Ok(None)
         };
 
-        let mut parts = line.split_whitespace();
-        let Some(c) = parts.next() else {
-            return Ok(Some(Command::EMPTY));
+        let mut args = line.split_whitespace();
+        let Some(c) = args.next() else {
+            return Ok(Some(Command::NOOP));
         };
+        let args: Vec<&str> = args.collect();
+        match (c.to_ascii_uppercase().as_str(), args.as_slice()) {
+            ("PING", []) => return Ok(Some(Command::PING)),
+            ("PING", _) => return Err(Error::Protocol(ProtocolError::WrongArity)),
+            (_, _) => return Err(Error::Protocol(ProtocolError::UnknownCommand)),
+        }
 
         Ok(None)
     }
