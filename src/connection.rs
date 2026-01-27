@@ -44,9 +44,9 @@ impl Connection {
         let mut parts = line.split_whitespace();
         let Some(c) = parts.next() else {
             return Ok(Some(Command::EMPTY));
-        }
+        };
 
-        return Ok(None)
+        Ok(None)
     }
 
     fn process_command(&mut self, command: Command) -> Result<Response, Error> {
