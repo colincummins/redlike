@@ -1,3 +1,4 @@
+#![allow(clippy::upper_case_acronyms)]
 use tokio::io::{AsyncBufReadExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
