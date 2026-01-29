@@ -1,6 +1,6 @@
 #![allow(clippy::upper_case_acronyms)]
-use tokio::io::{AsyncBufReadExt, BufReader, AsyncRead, AsyncWrite, sink};
-use crate::connection;
+use tokio::io::{AsyncBufReadExt, BufReader, AsyncRead, AsyncWrite};
+use tokio::io::sink;
 use crate::store::Store;
 use crate::error::Error;
 
@@ -49,7 +49,9 @@ W: AsyncWrite + Unpin,
         let args: Vec<&str> = args.collect();
         match (c.to_ascii_uppercase().as_str(), args.as_slice()) {
             ("PING", []) => Ok(Some(Command::PING)),
-            ("PING", _) => Err(Error::WrongArity { command: "PING".into(), given: 1, expected: 0 }),
+            ("PING", rest) => Err(Error::WrongArity { command: "PING".into(), given: rest.len(), expected: 0 }),
+            ("GET", [key]) => Ok(Some(Command::GET{key: key.to_string()})),
+            ("GET", rest) => Err(Error::WrongArity { command: "PING".into(), given: rest.len(), expected: 0 }),
             (_, _) => Err(Error::UnknownCommand),
         }
 
@@ -85,5 +87,15 @@ mod tests {
         client.write_all(b"PING\n").await.unwrap();
         let cmd = connection.read_command().await.unwrap();
         assert_eq!(cmd, Some(Command::PING));
+    }
+
+    #[tokio::test]
+    async fn fail_ping () {
+        let (mut client, server) = duplex(64);
+        let store:Store = Default::default();
+        let mut connection: Connection<tokio::io::DuplexStream, _> = Connection::new(server, sink(), store);
+        let _ = client.write_all(b"PING extra words\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "PING"));
     }
 }
