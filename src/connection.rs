@@ -101,4 +101,12 @@ mod tests {
         let result = connection.read_command().await.unwrap_err();
         assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "PING"));
     }
+    
+    #[tokio::test]
+    async fn successful_read_get () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"get mykey\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::GET { key: "mykey".to_string()}));
+    }
 }
