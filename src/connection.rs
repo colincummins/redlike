@@ -95,6 +95,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn successful_noop () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::NOOP));
+    }
+
+    #[tokio::test]
     async fn successful_read_ping () {
         let (mut connection, mut client) = setup_connection();
         client.write_all(b"PING\n").await.unwrap();
