@@ -27,7 +27,7 @@ impl <R,W> Connection<R,W> where
 R: AsyncRead + Unpin,
 W: AsyncWrite + Unpin, 
 {
-    fn new(reader: R, writer: W, store: Store) -> Self {
+    pub fn new(reader: R, writer: W, store: Store) -> Self {
         Connection {
             reader: BufReader::new(reader),
             writer,
