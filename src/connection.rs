@@ -52,6 +52,8 @@ W: AsyncWrite + Unpin,
             ("PING", rest) => Err(Error::WrongArity { command: "PING".into(), given: rest.len(), expected: 0 }),
             ("GET", [key]) => Ok(Some(Command::GET{key: key.to_string()})),
             ("GET", rest) => Err(Error::WrongArity { command: "GET".into(), given: rest.len(), expected: 1 }),
+            ("SET", [key, value]) => Ok(Some(Command::SET{key: key.to_string(), value: value.to_string()})),
+            ("SET", rest @ [..]) => Err(Error::WrongArity { command: "SET".into(), given: rest.len(), expected: 2 }),
             (_, _) => Err(Error::UnknownCommand),
         }
 
@@ -135,5 +137,27 @@ mod tests {
         let _ = client.write_all(b"GET too many\n").await;
         let result = connection.read_command().await.unwrap_err();
         assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 1 } if command == "GET"));
+    }
+
+    #[tokio::test]
+    async fn successful_read_set () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"set mykey myvalue\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::SET { key: "mykey".to_string(), value: "myvalue".to_string()}));
+    }
+
+    #[tokio::test]
+    async fn fail_read_set () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"set\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 0, expected: 2 } if command == "SET"));
+        let _ = client.write_all(b"set mykey\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 1, expected: 2 } if command == "SET"));
+        let _ = client.write_all(b"set mykey myvalue extra\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 3, expected: 2 } if command == "SET"));
     }
 }
