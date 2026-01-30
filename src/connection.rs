@@ -51,7 +51,7 @@ W: AsyncWrite + Unpin,
             ("PING", []) => Ok(Some(Command::PING)),
             ("PING", rest) => Err(Error::WrongArity { command: "PING".into(), given: rest.len(), expected: 0 }),
             ("GET", [key]) => Ok(Some(Command::GET{key: key.to_string()})),
-            ("GET", rest) => Err(Error::WrongArity { command: "PING".into(), given: rest.len(), expected: 0 }),
+            ("GET", rest) => Err(Error::WrongArity { command: "GET".into(), given: rest.len(), expected: 1 }),
             (_, _) => Err(Error::UnknownCommand),
         }
 
@@ -108,5 +108,16 @@ mod tests {
         client.write_all(b"get mykey\n").await.unwrap();
         let cmd = connection.read_command().await.unwrap();
         assert_eq!(cmd, Some(Command::GET { key: "mykey".to_string()}));
+    }
+
+    #[tokio::test]
+    async fn fail_read_get () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"GET\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 0, expected: 1 } if command == "GET"));
+        let _ = client.write_all(b"GET too many\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 1 } if command == "GET"));
     }
 }
