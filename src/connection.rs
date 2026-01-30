@@ -75,25 +75,28 @@ W: AsyncWrite + Unpin,
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::{AsyncWriteExt, duplex};
+    use tokio::io::{AsyncWriteExt, DuplexStream, Sink, duplex};
 
     use super::*;
 
-    #[tokio::test]
-    async fn successful_ping () {
-        let (mut client, server) = duplex(64);
+    fn setup_connection () -> (Connection<tokio::io::DuplexStream, Sink>, DuplexStream) {
+        let (client, server) = duplex(64);
         let store:Store = Default::default();
-        let mut connection: Connection<tokio::io::DuplexStream, _> = Connection::new(server, sink(), store);
+        let connection: Connection<tokio::io::DuplexStream, _> = Connection::new(server, sink(), store);
+        (connection, client)
+    }
+
+    #[tokio::test]
+    async fn successful_read_ping () {
+        let (mut connection, mut client) = setup_connection();
         client.write_all(b"PING\n").await.unwrap();
         let cmd = connection.read_command().await.unwrap();
         assert_eq!(cmd, Some(Command::PING));
     }
 
     #[tokio::test]
-    async fn fail_ping () {
-        let (mut client, server) = duplex(64);
-        let store:Store = Default::default();
-        let mut connection: Connection<tokio::io::DuplexStream, _> = Connection::new(server, sink(), store);
+    async fn fail_read_ping () {
+        let (mut connection, mut client) = setup_connection();
         let _ = client.write_all(b"PING extra words\n").await;
         let result = connection.read_command().await.unwrap_err();
         assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "PING"));
