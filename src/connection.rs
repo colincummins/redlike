@@ -87,14 +87,14 @@ mod tests {
 
     fn setup_connection () -> (Connection<tokio::io::DuplexStream, Sink>, DuplexStream) {
         let (client, server) = duplex(64);
-        let store:Store = Default::default();
+        let store:Store = Store::new();
         let connection: Connection<tokio::io::DuplexStream, _> = Connection::new(server, sink(), store);
         (connection, client)
     }
 
     #[tokio::test]
     async fn eol_returns_non () {
-        let store:Store = Default::default();
+        let store:Store = Store::new();
         let mut connection: Connection<tokio::io::Empty, _> = Connection::new(tokio::io::empty(), sink(), store);
         let cmd = connection.read_command().await.unwrap();
         assert_eq!(cmd, None);
