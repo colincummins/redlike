@@ -56,6 +56,8 @@ W: AsyncWrite + Unpin,
             ("SET", rest @ [..]) => Err(Error::WrongArity { command: "SET".into(), given: rest.len(), expected: 2 }),
             ("DEL", [key]) => Ok(Some(Command::DEL{key: key.to_string()})),
             ("DEL", rest) => Err(Error::WrongArity { command: "DEL".into(), given: rest.len(), expected: 1 }),
+            ("QUIT", []) => Ok(Some(Command::QUIT)),
+            ("QUIT", rest) => Err(Error::WrongArity { command: "QUIT".into(), given: rest.len(), expected: 0 }),
             (_, _) => Err(Error::UnknownCommand),
         }
 
@@ -182,4 +184,19 @@ mod tests {
         assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 1 } if command == "DEL"));
     }
 
+    #[tokio::test]
+    async fn successful_read_quit () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"quit\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::QUIT));
+    }
+
+    #[tokio::test]
+    async fn fail_read_quit () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"quit extra words\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "QUIT"));
+    }
 }
