@@ -93,7 +93,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn end_of_line () {
+    async fn eol_returns_non () {
         let store:Store = Default::default();
         let mut connection: Connection<tokio::io::Empty, _> = Connection::new(tokio::io::empty(), sink(), store);
         let cmd = connection.read_command().await.unwrap();
@@ -101,7 +101,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_noop () {
+    async fn blank_line_returns_noop () {
         let (mut connection, mut client) = setup_connection();
         client.write_all(b"\n").await.unwrap();
         let cmd = connection.read_command().await.unwrap();
@@ -117,7 +117,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fail_read_ping () {
+    async fn reject_bad_arity_ping () {
         let (mut connection, mut client) = setup_connection();
         let _ = client.write_all(b"PING extra words\n").await;
         let result = connection.read_command().await.unwrap_err();
@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fail_read_get () {
+    async fn reject_bad_arity_get () {
         let (mut connection, mut client) = setup_connection();
         let _ = client.write_all(b"GET\n").await;
         let result = connection.read_command().await.unwrap_err();
@@ -152,7 +152,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fail_read_set () {
+    async fn reject_bad_arity_set () {
         let (mut connection, mut client) = setup_connection();
         let _ = client.write_all(b"set\n").await;
         let result = connection.read_command().await.unwrap_err();
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fail_read_del () {
+    async fn reject_bad_arity_del () {
         let (mut connection, mut client) = setup_connection();
         let _ = client.write_all(b"del\n").await;
         let result = connection.read_command().await.unwrap_err();
@@ -193,10 +193,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fail_read_quit () {
+    async fn reject_bad_arity_quit () {
         let (mut connection, mut client) = setup_connection();
         let _ = client.write_all(b"quit extra words\n").await;
         let result = connection.read_command().await.unwrap_err();
         assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "QUIT"));
+    }
+
+    #[tokio::test]
+    async fn reject_unknown_commands () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"FOO\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::UnknownCommand));
     }
 }
