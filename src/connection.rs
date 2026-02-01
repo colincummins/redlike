@@ -1,14 +1,16 @@
 #![allow(clippy::upper_case_acronyms)]
-use tokio::io::{AsyncBufReadExt};
+use tokio::io::{AsyncBufReadExt, BufReader, AsyncRead, AsyncWrite};
+use tokio::io::sink;
 use crate::store::Store;
 use crate::error::Error;
 
 pub struct Connection<R, W> {
-    reader: R,
+    reader: BufReader<R>,
     writer: W,
     store: Store,
 }
 
+#[derive(PartialEq, Eq, Debug)]
 enum Command {
     PING,
     GET{key: String},
@@ -22,9 +24,16 @@ enum Command {
 enum Response {}
 
 impl <R,W> Connection<R,W> where
-R: AsyncBufReadExt + Unpin,
-W: Unpin, 
+R: AsyncRead + Unpin,
+W: AsyncWrite + Unpin, 
 {
+    pub fn new(reader: R, writer: W, store: Store) -> Self {
+        Connection {
+            reader: BufReader::new(reader),
+            writer,
+            store
+        }
+    }
     #[allow(dead_code)]
     async fn read_command(&mut self) -> Result<Option<Command>, Error> {
         let mut line = String::new();
@@ -39,9 +48,17 @@ W: Unpin,
         };
         let args: Vec<&str> = args.collect();
         match (c.to_ascii_uppercase().as_str(), args.as_slice()) {
-            ("PING", []) => return Ok(Some(Command::PING)),
-            ("PING", _) => return Err(Error::WrongArity { command: "PING".into(), given: 1, expected: 0 }),
-            (_, _) => return Err(Error::UnknownCommand),
+            ("PING", []) => Ok(Some(Command::PING)),
+            ("PING", rest) => Err(Error::WrongArity { command: "PING".into(), given: rest.len(), expected: 0 }),
+            ("GET", [key]) => Ok(Some(Command::GET{key: key.to_string()})),
+            ("GET", rest) => Err(Error::WrongArity { command: "GET".into(), given: rest.len(), expected: 1 }),
+            ("SET", [key, value]) => Ok(Some(Command::SET{key: key.to_string(), value: value.to_string()})),
+            ("SET", rest @ [..]) => Err(Error::WrongArity { command: "SET".into(), given: rest.len(), expected: 2 }),
+            ("DEL", [key]) => Ok(Some(Command::DEL{key: key.to_string()})),
+            ("DEL", rest) => Err(Error::WrongArity { command: "DEL".into(), given: rest.len(), expected: 1 }),
+            ("QUIT", []) => Ok(Some(Command::QUIT)),
+            ("QUIT", rest) => Err(Error::WrongArity { command: "QUIT".into(), given: rest.len(), expected: 0 }),
+            (_, _) => Err(Error::UnknownCommand),
         }
 
     }
@@ -59,5 +76,135 @@ W: Unpin,
     #[allow(dead_code)] 
     fn run(&mut self, response: Response) -> Result<(), Error> {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncWriteExt, DuplexStream, Sink, duplex};
+
+    use super::*;
+
+    fn setup_connection () -> (Connection<tokio::io::DuplexStream, Sink>, DuplexStream) {
+        let (client, server) = duplex(64);
+        let store:Store = Default::default();
+        let connection: Connection<tokio::io::DuplexStream, _> = Connection::new(server, sink(), store);
+        (connection, client)
+    }
+
+    #[tokio::test]
+    async fn eol_returns_non () {
+        let store:Store = Default::default();
+        let mut connection: Connection<tokio::io::Empty, _> = Connection::new(tokio::io::empty(), sink(), store);
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, None);
+    }
+
+    #[tokio::test]
+    async fn blank_line_returns_noop () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::NOOP));
+    }
+
+    #[tokio::test]
+    async fn successful_read_ping () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"PING\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::PING));
+    }
+
+    #[tokio::test]
+    async fn reject_bad_arity_ping () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"PING extra words\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "PING"));
+    }
+    
+    #[tokio::test]
+    async fn successful_read_get () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"get mykey\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::GET { key: "mykey".to_string()}));
+    }
+
+    #[tokio::test]
+    async fn reject_bad_arity_get () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"GET\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 0, expected: 1 } if command == "GET"));
+        let _ = client.write_all(b"GET too many\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 1 } if command == "GET"));
+    }
+
+    #[tokio::test]
+    async fn successful_read_set () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"set mykey myvalue\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::SET { key: "mykey".to_string(), value: "myvalue".to_string()}));
+    }
+
+    #[tokio::test]
+    async fn reject_bad_arity_set () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"set\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 0, expected: 2 } if command == "SET"));
+        let _ = client.write_all(b"set mykey\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 1, expected: 2 } if command == "SET"));
+        let _ = client.write_all(b"set mykey myvalue extra\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 3, expected: 2 } if command == "SET"));
+    }
+
+    #[tokio::test]
+    async fn successful_read_del () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"del mykey\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::DEL { key: "mykey".to_string()}));
+    }
+
+    #[tokio::test]
+    async fn reject_bad_arity_del () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"del\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 0, expected: 1 } if command == "DEL"));
+        let _ = client.write_all(b"del too many\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 1 } if command == "DEL"));
+    }
+
+    #[tokio::test]
+    async fn successful_read_quit () {
+        let (mut connection, mut client) = setup_connection();
+        client.write_all(b"quit\n").await.unwrap();
+        let cmd = connection.read_command().await.unwrap();
+        assert_eq!(cmd, Some(Command::QUIT));
+    }
+
+    #[tokio::test]
+    async fn reject_bad_arity_quit () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"quit extra words\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "QUIT"));
+    }
+
+    #[tokio::test]
+    async fn reject_unknown_commands () {
+        let (mut connection, mut client) = setup_connection();
+        let _ = client.write_all(b"FOO\n").await;
+        let result = connection.read_command().await.unwrap_err();
+        assert!(matches!(result, Error::UnknownCommand));
     }
 }
