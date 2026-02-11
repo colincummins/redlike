@@ -42,3 +42,22 @@ impl Default for Store {
         Store::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn set_then_get() {
+        let store = Store::new();
+        store.set("newkey".to_string(), "newvalue".to_string()).await;
+        assert_eq!(Some("newvalue".to_string()),store.get("newkey").await)
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_key() {
+        let store = Store::new();
+        assert_eq!(None, store.get("newkey").await)
+    }
+
+}
