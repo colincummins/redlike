@@ -60,4 +60,17 @@ mod tests {
         assert_eq!(None, store.get("newkey").await)
     }
 
+    #[tokio::test]
+    async fn delete_existing_key() {
+        let store = Store::new();
+        store.set("newkey".to_string(), "newvalue".to_string()).await;
+        assert!(store.delete("newkey").await.is_some())
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_key() {
+        let store = Store::new();
+        assert!(store.delete("newkey").await.is_none())
+    }
+
 }
