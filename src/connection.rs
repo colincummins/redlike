@@ -70,7 +70,7 @@ W: AsyncWrite + Unpin,
     async fn process_command(&mut self, command: Command) -> Result<Option<Response>, Error> {
         match command {
             Command::PING => Ok(Some(Response::Simple("PONG".into()))),
-            _ => Ok(Some(Response::Error("unknown command".to_string())))
+            _ => Ok(Some(Response::Error("Command not implemented yet".to_string())))
         }
     }
 
