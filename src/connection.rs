@@ -85,7 +85,12 @@ W: AsyncWrite + Unpin,
                 Ok(ProcessOutcome::Respond(Response::Simple("OK".into())))
             },
             Command::GET {key} => Ok(ProcessOutcome::Respond(Response::Simple(self.store.get(&key).await.unwrap_or_default()))),
-            _ => Ok(ProcessOutcome::Respond(Response::Error("Command Not Recognized".into())))
+            Command::DEL {key} => {
+                let deleted = self.store.delete(&key).await
+                .map(|_| "1")
+                .unwrap_or("0");
+                Ok(ProcessOutcome::Respond(Response::Simple(deleted.into())))
+            }
         }
     }
 
@@ -268,5 +273,20 @@ mod tests {
         let mut conn = setup_dummy_connection();
         let response = conn.process_command(Command::GET { key: "mykey".into() }).await.unwrap();
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple(String::new())))
+    }
+
+    #[tokio::test]
+    async fn delete_existing_key () {
+        let mut conn = setup_dummy_connection();
+        let _ = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
+        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await.unwrap();
+        assert_eq!(response, ProcessOutcome::Respond(Response::Simple("1".into())))
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_key () {
+        let mut conn = setup_dummy_connection();
+        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await.unwrap();
+        assert_eq!(response, ProcessOutcome::Respond(Response::Simple("0".into())))
     }
 }
