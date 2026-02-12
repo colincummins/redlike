@@ -28,6 +28,13 @@ enum Response {
     Noop
 }
 
+#[derive(PartialEq, Eq, Debug)]
+enum ProcessOutcome {
+    Quit,
+    Noop,
+    Respond(Response)
+}
+
 impl <R,W> Connection<R,W> where
 R: AsyncRead + Unpin,
 W: AsyncWrite + Unpin, 
@@ -68,15 +75,16 @@ W: AsyncWrite + Unpin,
     }
 
     #[allow(dead_code)]
-    async fn process_command(&mut self, command: Command) -> Result<Option<Response>, Error> {
+    async fn process_command(&mut self, command: Command) -> ProcessOutcome {
         match command {
-            Command::NOOP => Ok(Some(Response::Noop)),
-            Command::PING => Ok(Some(Response::Simple("PONG".into()))),
+            Command::NOOP => ProcessOutcome::Noop,
+            Command::QUIT => ProcessOutcome::Quit,
+            Command::PING => ProcessOutcome::Respond(Response::Simple("PONG".into())),
             Command::SET {key, value} => {
                 let _ = self.store.set(key, value).await;
-                Ok(Some(Response::Simple("OK".into())))
+                ProcessOutcome::Respond(Response::Simple("OK".into()))
             },
-            _ => Ok(Some(Response::Error("Command not implemented yet".to_string())))
+            _ => ProcessOutcome::Respond(Response::Error("Command Not Recognized".into()))
         }
     }
 
@@ -227,21 +235,21 @@ mod tests {
     #[tokio::test]
     async fn responds_to_ping () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::PING).await.unwrap();
-        assert_eq!(response, Some(Response::Simple("PONG".to_string())))
+        let response = conn.process_command(Command::PING).await;
+        assert_eq!(response, ProcessOutcome::Respond(Response::Simple("PONG".to_string())))
     }
 
     #[tokio::test]
-    async fn noop_gives_noop_response () {
+    async fn noop_gives_noop_outcome () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::NOOP).await.unwrap();
-        assert_eq!(response, Some(Response::Noop))
+        let response = conn.process_command(Command::NOOP).await;
+        assert_eq!(response, ProcessOutcome::Noop)
     }
 
     #[tokio::test]
     async fn set_sends_ok_response () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
-        assert_eq!(response, Some(Response::Simple("OK".into())))
+        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await;
+        assert_eq!(response, ProcessOutcome::Respond(Response::Simple("OK".into())))
     }
 }
