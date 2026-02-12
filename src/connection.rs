@@ -72,6 +72,10 @@ W: AsyncWrite + Unpin,
         match command {
             Command::NOOP => Ok(Some(Response::Noop)),
             Command::PING => Ok(Some(Response::Simple("PONG".into()))),
+            Command::SET {key, value} => {
+                let _ = self.store.set(key, value).await;
+                Ok(Some(Response::Simple("OK".into())))
+            },
             _ => Ok(Some(Response::Error("Command not implemented yet".to_string())))
         }
     }
@@ -232,5 +236,12 @@ mod tests {
         let mut conn = setup_dummy_connection();
         let response = conn.process_command(Command::NOOP).await.unwrap();
         assert_eq!(response, Some(Response::Noop))
+    }
+
+    #[tokio::test]
+    async fn set_sends_ok_response () {
+        let mut conn = setup_dummy_connection();
+        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
+        assert_eq!(response, Some(Response::Simple("OK".into())))
     }
 }
