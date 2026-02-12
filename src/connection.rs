@@ -25,7 +25,6 @@ enum Command {
 enum Response {
     Simple(String),
     Error(String),
-    Noop
 }
 
 #[derive(PartialEq, Eq, Debug)]
