@@ -22,7 +22,7 @@ impl Store {
         map.insert(key, value)
     }
 
-    pub async fn delete(&self, key: &str) -> Option<String>{
+    pub async fn del(&self, key: &str) -> Option<String>{
         let mut map = self.inner.write().await;
         map.remove(key)
     }
@@ -64,13 +64,13 @@ mod tests {
     async fn delete_existing_key() {
         let store = Store::new();
         store.set("newkey".to_string(), "newvalue".to_string()).await;
-        assert!(store.delete("newkey").await.is_some())
+        assert!(store.del("newkey").await.is_some())
     }
 
     #[tokio::test]
     async fn delete_nonexistent_key() {
         let store = Store::new();
-        assert!(store.delete("newkey").await.is_none())
+        assert!(store.del("newkey").await.is_none())
     }
 
 }
