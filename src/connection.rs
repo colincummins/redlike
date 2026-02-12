@@ -85,7 +85,7 @@ W: AsyncWrite + Unpin,
             },
             Command::GET {key} => Ok(ProcessOutcome::Respond(Response::Simple(self.store.get(&key).await.unwrap_or_default()))),
             Command::DEL {key} => {
-                let deleted = self.store.delete(&key).await
+                let deleted = self.store.del(&key).await
                 .map(|_| "1")
                 .unwrap_or("0");
                 Ok(ProcessOutcome::Respond(Response::Simple(deleted.into())))
