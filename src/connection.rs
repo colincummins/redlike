@@ -104,9 +104,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn eol_returns_non () {
-        let store:Store = Store::new();
-        let mut connection: Connection<tokio::io::Empty, _> = Connection::new(tokio::io::empty(), sink(), store);
+    async fn eol_returns_none () {
+        let mut connection = setup_dummy_connection();
         let cmd = connection.read_command().await.unwrap();
         assert_eq!(cmd, None);
     }
