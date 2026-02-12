@@ -1,5 +1,7 @@
 #![allow(clippy::upper_case_acronyms)]
-use tokio::io::{AsyncBufReadExt, BufReader, AsyncRead, AsyncWrite};
+use std::fmt::format;
+
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::io::sink;
 use crate::store::Store;
 use crate::error::Error;
@@ -95,7 +97,13 @@ W: AsyncWrite + Unpin,
 
     #[allow(dead_code)]
     async fn send_response(&mut self, response: Response) -> Result<(), Error> {
-        todo!()
+        let message_text = match response {
+            Response::Error(inner) => format!("ERR {}\n", inner),
+            Response::Simple(inner)=> format!("{}\n", inner)
+        };
+        self.writer.write_all(&message_text.into_bytes()).await?;
+        self.writer.flush().await?;
+        Ok(())
     }
 
     #[allow(dead_code)] 
@@ -287,5 +295,21 @@ mod tests {
         let mut conn = setup_dummy_connection();
         let response = conn.process_command(Command::DEL { key: "mykey".into() }).await.unwrap();
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("0".into())))
+    }
+
+    #[tokio::test]
+    async fn send_response () {
+        let (client, server) = tokio::io::duplex(64);
+        let mut client_reader = BufReader::new(client);
+        let store = Store::new();
+        let mut conn = Connection::new(tokio::io::empty(), server, store);
+        conn.send_response(Response::Simple("OK".into())).await.unwrap();
+        let mut buf = String::new();
+        client_reader.read_line(&mut buf).await.unwrap();
+        assert_eq!(buf, "OK\n".to_string());
+        conn.send_response(Response::Error("Test".into())).await.unwrap();
+        let mut buf = String::new();
+        client_reader.read_line(&mut buf).await.unwrap();
+        assert_eq!(buf, "ERR Test\n".to_string());
     }
 }
