@@ -21,7 +21,11 @@ enum Command {
 }
 
 
-enum Response {}
+#[derive(PartialEq, Eq, Debug)]
+enum Response {
+    Simple(String),
+    Error(String)
+}
 
 impl <R,W> Connection<R,W> where
 R: AsyncRead + Unpin,
@@ -34,7 +38,6 @@ W: AsyncWrite + Unpin,
             store
         }
     }
-    #[allow(dead_code)]
     async fn read_command(&mut self) -> Result<Option<Command>, Error> {
         let mut line = String::new();
         
@@ -64,17 +67,20 @@ W: AsyncWrite + Unpin,
     }
 
     #[allow(dead_code)]
-    fn process_command(&mut self, command: Command) -> Result<Response, Error> {
-        todo!()
+    async fn process_command(&mut self, command: Command) -> Result<Response, Error> {
+        match command {
+            Command::PING => Ok(Response::Simple("PONG".to_string())),
+            _ => Ok(Response::Error("unknown command".to_string()))
+        }
     }
 
     #[allow(dead_code)]
-    fn send_response(&mut self, response: Response) -> Result<(), Error> {
+    async fn send_response(&mut self, response: Response) -> Result<(), Error> {
         todo!()
     }
 
     #[allow(dead_code)] 
-    fn run(&mut self, response: Response) -> Result<(), Error> {
+    async fn run(&mut self, response: Response) -> Result<(), Error> {
         todo!()
     }
 }
@@ -90,6 +96,11 @@ mod tests {
         let store:Store = Store::new();
         let connection: Connection<tokio::io::DuplexStream, _> = Connection::new(server, sink(), store);
         (connection, client)
+    }
+
+    fn setup_dummy_connection () -> Connection<tokio::io::Empty, Sink> {
+        let store:Store = Store::new();
+        Connection::new(tokio::io::empty(), tokio::io::sink(), store)
     }
 
     #[tokio::test]
@@ -206,5 +217,12 @@ mod tests {
         let _ = client.write_all(b"FOO\n").await;
         let result = connection.read_command().await.unwrap_err();
         assert!(matches!(result, Error::UnknownCommand));
+    }
+
+    #[tokio::test]
+    async fn responds_to_ping () {
+        let mut conn = setup_dummy_connection();
+        let response = conn.process_command(Command::PING).await.unwrap();
+        assert_eq!(response, Response::Simple("PONG".to_string()))
     }
 }
