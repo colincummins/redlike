@@ -24,7 +24,8 @@ enum Command {
 #[derive(PartialEq, Eq, Debug)]
 enum Response {
     Simple(String),
-    Error(String)
+    Error(String),
+    Noop
 }
 
 impl <R,W> Connection<R,W> where
@@ -69,7 +70,7 @@ W: AsyncWrite + Unpin,
     #[allow(dead_code)]
     async fn process_command(&mut self, command: Command) -> Result<Option<Response>, Error> {
         match command {
-            Command::NOOP => Ok(Some(Response::Simple(String::new()))),
+            Command::NOOP => Ok(Some(Response::Noop)),
             Command::PING => Ok(Some(Response::Simple("PONG".into()))),
             _ => Ok(Some(Response::Error("Command not implemented yet".to_string())))
         }
@@ -227,9 +228,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn noop_gives_empty_string () {
+    async fn noop_gives_noop_response () {
         let mut conn = setup_dummy_connection();
         let response = conn.process_command(Command::NOOP).await.unwrap();
-        assert_eq!(response, Some(Response::Simple(String::new())))
+        assert_eq!(response, Some(Response::Noop))
     }
 }
