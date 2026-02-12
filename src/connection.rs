@@ -67,10 +67,10 @@ W: AsyncWrite + Unpin,
     }
 
     #[allow(dead_code)]
-    async fn process_command(&mut self, command: Command) -> Result<Response, Error> {
+    async fn process_command(&mut self, command: Command) -> Result<Option<Response>, Error> {
         match command {
-            Command::PING => Ok(Response::Simple("PONG".to_string())),
-            _ => Ok(Response::Error("unknown command".to_string()))
+            Command::PING => Ok(Some(Response::Simple("PONG".into()))),
+            _ => Ok(Some(Response::Error("unknown command".to_string())))
         }
     }
 
@@ -222,6 +222,6 @@ mod tests {
     async fn responds_to_ping () {
         let mut conn = setup_dummy_connection();
         let response = conn.process_command(Command::PING).await.unwrap();
-        assert_eq!(response, Response::Simple("PONG".to_string()))
+        assert_eq!(response, Some(Response::Simple("PONG".to_string())))
     }
 }
