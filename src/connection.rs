@@ -84,6 +84,7 @@ W: AsyncWrite + Unpin,
                 let _ = self.store.set(key, value).await;
                 Ok(ProcessOutcome::Respond(Response::Simple("OK".into())))
             },
+            Command::GET {key} => Ok(ProcessOutcome::Respond(Response::Simple(self.store.get(&key).await.unwrap_or_default()))),
             _ => Ok(ProcessOutcome::Respond(Response::Error("Command Not Recognized".into())))
         }
     }
@@ -251,5 +252,21 @@ mod tests {
         let mut conn = setup_dummy_connection();
         let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("OK".into())))
+    }
+
+    #[tokio::test]
+    async fn set_then_get () {
+        let mut conn = setup_dummy_connection();
+        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
+        assert_eq!(response, ProcessOutcome::Respond(Response::Simple("OK".into())));
+        let response = conn.process_command(Command::GET { key: "mykey".into() }).await.unwrap();
+        assert_eq!(response, ProcessOutcome::Respond(Response::Simple("myvalue".into())))
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_key_returns_empty_string_response () {
+        let mut conn = setup_dummy_connection();
+        let response = conn.process_command(Command::GET { key: "mykey".into() }).await.unwrap();
+        assert_eq!(response, ProcessOutcome::Respond(Response::Simple(String::new())))
     }
 }
