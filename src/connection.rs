@@ -69,7 +69,7 @@ W: AsyncWrite + Unpin,
     #[allow(dead_code)]
     async fn process_command(&mut self, command: Command) -> Result<Option<Response>, Error> {
         match command {
-            Command::NOOP => Ok(None),
+            Command::NOOP => Ok(Some(Response::Simple(String::new()))),
             Command::PING => Ok(Some(Response::Simple("PONG".into()))),
             _ => Ok(Some(Response::Error("Command not implemented yet".to_string())))
         }
@@ -227,9 +227,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn noop_gives_no_reponse () {
+    async fn noop_gives_empty_string () {
         let mut conn = setup_dummy_connection();
         let response = conn.process_command(Command::NOOP).await.unwrap();
-        assert!(response.is_none())
+        assert_eq!(response, Some(Response::Simple(String::new())))
     }
 }
