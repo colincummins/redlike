@@ -75,16 +75,16 @@ W: AsyncWrite + Unpin,
     }
 
     #[allow(dead_code)]
-    async fn process_command(&mut self, command: Command) -> ProcessOutcome {
+    async fn process_command(&mut self, command: Command) -> Result<ProcessOutcome, Error> {
         match command {
-            Command::NOOP => ProcessOutcome::Noop,
-            Command::QUIT => ProcessOutcome::Quit,
-            Command::PING => ProcessOutcome::Respond(Response::Simple("PONG".into())),
+            Command::NOOP => Ok(ProcessOutcome::Noop),
+            Command::QUIT => Ok(ProcessOutcome::Quit),
+            Command::PING => Ok(ProcessOutcome::Respond(Response::Simple("PONG".into()))),
             Command::SET {key, value} => {
                 let _ = self.store.set(key, value).await;
-                ProcessOutcome::Respond(Response::Simple("OK".into()))
+                Ok(ProcessOutcome::Respond(Response::Simple("OK".into())))
             },
-            _ => ProcessOutcome::Respond(Response::Error("Command Not Recognized".into()))
+            _ => Ok(ProcessOutcome::Respond(Response::Error("Command Not Recognized".into())))
         }
     }
 
@@ -235,21 +235,21 @@ mod tests {
     #[tokio::test]
     async fn responds_to_ping () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::PING).await;
+        let response = conn.process_command(Command::PING).await.unwrap();
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("PONG".to_string())))
     }
 
     #[tokio::test]
     async fn noop_gives_noop_outcome () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::NOOP).await;
+        let response = conn.process_command(Command::NOOP).await.unwrap();
         assert_eq!(response, ProcessOutcome::Noop)
     }
 
     #[tokio::test]
     async fn set_sends_ok_response () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await;
+        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("OK".into())))
     }
 }
