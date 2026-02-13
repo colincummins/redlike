@@ -82,7 +82,7 @@ W: AsyncWrite + Unpin,
             Command::QUIT => Ok(ProcessOutcome::Quit),
             Command::PING => Ok(ProcessOutcome::Respond(Response::Simple("PONG".into()))),
             Command::SET {key, value} => {
-                let _ = self.store.set(key, value).await;
+                self.store.set(key, value).await;
                 Ok(ProcessOutcome::Respond(Response::Simple("OK".into())))
             },
             Command::GET {key} => Ok(ProcessOutcome::Respond(Response::Simple(self.store.get(&key).await.unwrap_or_default()))),
@@ -101,13 +101,13 @@ W: AsyncWrite + Unpin,
             Response::Error(inner) => format!("ERR {}\n", inner),
             Response::Simple(inner)=> format!("{}\n", inner)
         };
-        self.writer.write_all(&message_text.into_bytes()).await?;
+        self.writer.write_all(message_text.as_bytes()).await?;
         self.writer.flush().await?;
         Ok(())
     }
 
     #[allow(dead_code)] 
-    async fn run(&mut self, response: Response) -> Result<(), Error> {
+    async fn run(&mut self) -> Result<(), Error> {
         todo!()
     }
 }
@@ -127,7 +127,7 @@ mod tests {
 
     fn setup_dummy_connection () -> Connection<tokio::io::Empty, Sink> {
         let store:Store = Store::new();
-        Connection::new(tokio::io::empty(), tokio::io::sink(), store)
+        Connection::new(tokio::io::empty(), sink(), store)
     }
 
     #[tokio::test]
