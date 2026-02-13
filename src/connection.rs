@@ -76,21 +76,21 @@ W: AsyncWrite + Unpin,
     }
 
     #[allow(dead_code)]
-    async fn process_command(&mut self, command: Command) -> Result<ProcessOutcome, Error> {
+    async fn process_command(&mut self, command: Command) -> ProcessOutcome {
         match command {
-            Command::NOOP => Ok(ProcessOutcome::Noop),
-            Command::QUIT => Ok(ProcessOutcome::Quit),
-            Command::PING => Ok(ProcessOutcome::Respond(Response::Simple("PONG".into()))),
+            Command::NOOP => ProcessOutcome::Noop,
+            Command::QUIT => ProcessOutcome::Quit,
+            Command::PING => ProcessOutcome::Respond(Response::Simple("PONG".into())),
             Command::SET {key, value} => {
                 self.store.set(key, value).await;
-                Ok(ProcessOutcome::Respond(Response::Simple("OK".into())))
+                ProcessOutcome::Respond(Response::Simple("OK".into()))
             },
-            Command::GET {key} => Ok(ProcessOutcome::Respond(Response::Simple(self.store.get(&key).await.unwrap_or_default()))),
+            Command::GET {key} => ProcessOutcome::Respond(Response::Simple(self.store.get(&key).await.unwrap_or_default())),
             Command::DEL {key} => {
                 let deleted = self.store.del(&key).await
                 .map(|_| "1")
                 .unwrap_or("0");
-                Ok(ProcessOutcome::Respond(Response::Simple(deleted.into())))
+                ProcessOutcome::Respond(Response::Simple(deleted.into()))
             }
         }
     }
@@ -108,7 +108,22 @@ W: AsyncWrite + Unpin,
 
     #[allow(dead_code)] 
     async fn run(&mut self) -> Result<(), Error> {
-        todo!()
+        loop {
+            let outcome = match self.read_command().await {
+                Ok(None) => break,
+                Ok(Some(Command::NOOP)) => continue,
+                Ok(Some(command)) => self.process_command(command).await,
+                Err(Error::UnknownCommand) => ProcessOutcome::Respond(Response::Error("Unknown Command".into())),
+                Err(Error::WrongArity { command:_, given:_, expected:_ }) => ProcessOutcome::Respond(Response::Error("Wrong number or arguments".into())),
+                Err(Error::Io(e)) => break,
+            };
+            match outcome {
+                ProcessOutcome::Noop => continue,
+                ProcessOutcome::Quit => break,
+                ProcessOutcome::Respond(r) => self.send_response(r).await?
+            }
+        }
+        Ok(())
     }
 }
 
@@ -248,52 +263,52 @@ mod tests {
     #[tokio::test]
     async fn responds_to_ping () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::PING).await.unwrap();
+        let response = conn.process_command(Command::PING).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("PONG".to_string())))
     }
 
     #[tokio::test]
     async fn noop_gives_noop_outcome () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::NOOP).await.unwrap();
+        let response = conn.process_command(Command::NOOP).await;
         assert_eq!(response, ProcessOutcome::Noop)
     }
 
     #[tokio::test]
     async fn set_sends_ok_response () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
+        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("OK".into())))
     }
 
     #[tokio::test]
     async fn set_then_get () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
+        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("OK".into())));
-        let response = conn.process_command(Command::GET { key: "mykey".into() }).await.unwrap();
+        let response = conn.process_command(Command::GET { key: "mykey".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("myvalue".into())))
     }
 
     #[tokio::test]
     async fn get_nonexistent_key_returns_empty_string_response () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::GET { key: "mykey".into() }).await.unwrap();
+        let response = conn.process_command(Command::GET { key: "mykey".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple(String::new())))
     }
 
     #[tokio::test]
     async fn delete_existing_key () {
         let mut conn = setup_dummy_connection();
-        let _ = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
-        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await.unwrap();
+        let _ = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await;
+        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("1".into())))
     }
 
     #[tokio::test]
     async fn delete_nonexistent_key () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await.unwrap();
+        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("0".into())))
     }
 
