@@ -327,4 +327,28 @@ mod tests {
         client_reader.read_line(&mut buf).await.unwrap();
         assert_eq!(buf, "ERR Test\n".to_string());
     }
+
+    struct TestCase <'a> {
+        call: &'a str,
+        response: &'a str,
+        expected: &'a str
+    }
+
+    #[tokio::test]
+    async fn e2e_run () {
+        let test_cases = vec![
+            TestCase{
+                call: "PING\n",
+                response: "PONG\n",
+                expected: "Should respond to PING with PONG"
+            }
+        ]
+        
+
+        let (client, server) = tokio::io::duplex(128);
+        let (reader, writer) = split(server);
+        let mut client_reader = BufReader::new(client);
+        let store = Store::new();
+        let mut conn = Connection::new(reader, writer, store);
+    }
 }
