@@ -342,7 +342,27 @@ mod tests {
                 call: "PING\n",
                 response: "PONG\n",
                 expected: "Should respond to PING with PONG"
-            }
+            },
+            TestCase{
+                call: "SET mykey myvalue\n",
+                response: "OK\n",
+                expected: "Should respond to SET with OK"
+            },
+            TestCase{
+                call: "GET mykey\n",
+                response: "myvalue\n",
+                expected: "Should retrieve value of mykey: myvalue"
+            },
+            TestCase{
+                call: "DEL mykey\n",
+                response: "1\n",
+                expected: "Should return 1 if key is succsesfully deleted"
+            },
+            TestCase{
+                call: "DEL mykey\n",
+                response: "0\n",
+                expected: "Should return 0 if DEL called on a key with no value"
+            },
         ];
         
 
@@ -366,7 +386,7 @@ mod tests {
             writer.flush().await.unwrap();
             let read_buffer = &mut String::new();
             reader.read_line(read_buffer).await.unwrap();
-            assert_eq!(read_buffer, response);
+            assert_eq!(response, read_buffer, "{}", expected);
         }
 
         let read_buffer = &mut String::new();
