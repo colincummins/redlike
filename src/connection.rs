@@ -389,9 +389,18 @@ mod tests {
             assert_eq!(response, read_buffer, "{}", expected);
         }
 
+
+        let read_buffer = &mut String::new();
+        writer.write_all("\n".as_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+        writer.write_all("PING\n".as_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+        reader.read_line(read_buffer).await.unwrap();
+        assert_eq!(read_buffer, "PONG\n", "NOOP should not return anything");
+
         let read_buffer = &mut String::new();
         writer.write_all("QUIT\n".as_bytes()).await.unwrap();
         writer.flush().await.unwrap();
-        assert_eq!(reader.read_line(read_buffer).await.unwrap(), 0);
+        assert_eq!(reader.read_line(read_buffer).await.unwrap(), 0, "QUIT should close connection");
     }
 }
