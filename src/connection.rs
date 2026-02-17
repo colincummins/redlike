@@ -351,10 +351,14 @@ mod tests {
         let store = Store::new();
         let mut conn = Connection::new(reader, writer, store);
 
+        let (reader, writer) = split(client);
+
         let mut reader = BufReader::new(reader);
         let mut writer = BufWriter::new(writer);
 
-        let _ = conn.run();
+        tokio::spawn(async move {
+            let _ = conn.run().await;
+        });
 
 
         for TestCase{call, response, expected} in test_cases {
