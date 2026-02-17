@@ -113,7 +113,7 @@ W: AsyncWrite + Unpin,
                 Ok(Some(Command::NOOP)) => continue,
                 Ok(Some(command)) => self.process_command(command).await,
                 Err(Error::UnknownCommand) => ProcessOutcome::Respond(Response::Error("Unknown Command".into())),
-                Err(Error::WrongArity { command:_, given:_, expected:_ }) => ProcessOutcome::Respond(Response::Error("Wrong number or arguments".into())),
+                Err(Error::WrongArity { command:_, given:_, expected:_ }) => ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into())),
                 Err(Error::Io(e)) => break,
             };
             match outcome {
@@ -354,14 +354,34 @@ mod tests {
                 expected: "Should retrieve value of mykey: myvalue"
             },
             TestCase{
+                call: "GET otherkey\n",
+                response: "\n",
+                expected: "Empty keys return empty lines"
+            },
+            TestCase{
                 call: "DEL mykey\n",
                 response: "1\n",
-                expected: "Should return 1 if key is succsesfully deleted"
+                expected: "Should return 1 if key is successfully deleted"
             },
             TestCase{
                 call: "DEL mykey\n",
                 response: "0\n",
                 expected: "Should return 0 if DEL called on a key with no value"
+            },
+            TestCase{
+                call: "FOO\n",
+                response: "ERR Unknown Command\n",
+                expected: "Unknown command gives error"
+            },
+            TestCase{
+                call: "SET mykey myvalue too many\n",
+                response: "ERR Wrong number of arguments\n",
+                expected: "Wrong number of arguments gives error"
+            },
+            TestCase{
+                call: "GET\n",
+                response: "ERR Wrong number of arguments\n",
+                expected: "Wrong number of arguments gives error"
             },
         ];
         
@@ -376,8 +396,8 @@ mod tests {
         let mut reader = BufReader::new(reader);
         let mut writer = BufWriter::new(writer);
 
-        tokio::spawn(async move {
-            let _ = conn.run().await;
+        let handle = tokio::spawn(async move {
+            conn.run().await
         });
 
 
@@ -402,5 +422,7 @@ mod tests {
         writer.write_all("QUIT\n".as_bytes()).await.unwrap();
         writer.flush().await.unwrap();
         assert_eq!(reader.read_line(read_buffer).await.unwrap(), 0, "QUIT should close connection");
+
+        handle.await.unwrap().unwrap();
     }
 }
