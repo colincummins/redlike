@@ -1,6 +1,4 @@
 #![allow(clippy::upper_case_acronyms)]
-use std::fmt::format;
-
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use crate::store::Store;
 use crate::error::Error;
@@ -74,7 +72,6 @@ W: AsyncWrite + Unpin,
 
     }
 
-    #[allow(dead_code)]
     async fn process_command(&mut self, command: Command) -> ProcessOutcome {
         match command {
             Command::NOOP => ProcessOutcome::Noop,
@@ -94,7 +91,6 @@ W: AsyncWrite + Unpin,
         }
     }
 
-    #[allow(dead_code)]
     async fn send_response(&mut self, response: Response) -> Result<(), Error> {
         let message_text = match response {
             Response::Error(inner) => format!("ERR {}\n", inner),
@@ -105,8 +101,7 @@ W: AsyncWrite + Unpin,
         Ok(())
     }
 
-    #[allow(dead_code)] 
-    async fn run(&mut self) -> Result<(), Error> {
+    pub async fn run(&mut self) -> Result<(), Error> {
         loop {
             let outcome = match self.read_command().await {
                 Ok(None) => break,
@@ -114,7 +109,7 @@ W: AsyncWrite + Unpin,
                 Ok(Some(command)) => self.process_command(command).await,
                 Err(Error::UnknownCommand) => ProcessOutcome::Respond(Response::Error("Unknown Command".into())),
                 Err(Error::WrongArity { command:_, given:_, expected:_ }) => ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into())),
-                Err(Error::Io(e)) => break,
+                Err(Error::Io(_e)) => break,
             };
             match outcome {
                 ProcessOutcome::Noop => continue,
@@ -128,9 +123,7 @@ W: AsyncWrite + Unpin,
 
 #[cfg(test)]
 mod tests {
-    use std::fs::read;
-
-    use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, Sink, duplex, split, sink};
+    use tokio::io::{AsyncWriteExt, DuplexStream, Sink, duplex, split, sink};
 
     use super::*;
 
