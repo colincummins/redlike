@@ -1,14 +1,13 @@
 #![allow(clippy::upper_case_acronyms)]
 use std::fmt::format;
 
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::io::sink;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use crate::store::Store;
 use crate::error::Error;
 
 pub struct Connection<R, W> {
     reader: BufReader<R>,
-    writer: W,
+    writer: BufWriter<W>,
     store: Store,
 }
 
@@ -43,7 +42,7 @@ W: AsyncWrite + Unpin,
     pub fn new(reader: R, writer: W, store: Store) -> Self {
         Connection {
             reader: BufReader::new(reader),
-            writer,
+            writer: BufWriter::new(writer ),
             store
         }
     }
@@ -129,7 +128,9 @@ W: AsyncWrite + Unpin,
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::{AsyncWriteExt, DuplexStream, Sink, duplex};
+    use std::fs::read;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, Sink, duplex, split, sink};
 
     use super::*;
 
@@ -342,13 +343,31 @@ mod tests {
                 response: "PONG\n",
                 expected: "Should respond to PING with PONG"
             }
-        ]
+        ];
         
 
         let (client, server) = tokio::io::duplex(128);
         let (reader, writer) = split(server);
-        let mut client_reader = BufReader::new(client);
         let store = Store::new();
         let mut conn = Connection::new(reader, writer, store);
+
+        let mut reader = BufReader::new(reader);
+        let mut writer = BufWriter::new(writer);
+
+        let _ = conn.run();
+
+
+        for TestCase{call, response, expected} in test_cases {
+            writer.write_all(call.as_bytes()).await.unwrap();
+            writer.flush().await.unwrap();
+            let read_buffer = &mut String::new();
+            reader.read_line(read_buffer).await.unwrap();
+            assert_eq!(read_buffer, response);
+        }
+
+        let read_buffer = &mut String::new();
+        writer.write_all("QUIT\n".as_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+        assert_eq!(reader.read_line(read_buffer).await.unwrap(), 0);
     }
 }
