@@ -1,12 +1,11 @@
 #![allow(clippy::upper_case_acronyms)]
-use tokio::io::{AsyncBufReadExt, BufReader, AsyncRead, AsyncWrite};
-use tokio::io::sink;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use crate::store::Store;
 use crate::error::Error;
 
 pub struct Connection<R, W> {
     reader: BufReader<R>,
-    writer: W,
+    writer: BufWriter<W>,
     store: Store,
 }
 
@@ -41,7 +40,7 @@ W: AsyncWrite + Unpin,
     pub fn new(reader: R, writer: W, store: Store) -> Self {
         Connection {
             reader: BufReader::new(reader),
-            writer,
+            writer: BufWriter::new(writer ),
             store
         }
     }
@@ -73,40 +72,58 @@ W: AsyncWrite + Unpin,
 
     }
 
-    #[allow(dead_code)]
-    async fn process_command(&mut self, command: Command) -> Result<ProcessOutcome, Error> {
+    async fn process_command(&mut self, command: Command) -> ProcessOutcome {
         match command {
-            Command::NOOP => Ok(ProcessOutcome::Noop),
-            Command::QUIT => Ok(ProcessOutcome::Quit),
-            Command::PING => Ok(ProcessOutcome::Respond(Response::Simple("PONG".into()))),
+            Command::NOOP => ProcessOutcome::Noop,
+            Command::QUIT => ProcessOutcome::Quit,
+            Command::PING => ProcessOutcome::Respond(Response::Simple("PONG".into())),
             Command::SET {key, value} => {
-                let _ = self.store.set(key, value).await;
-                Ok(ProcessOutcome::Respond(Response::Simple("OK".into())))
+                self.store.set(key, value).await;
+                ProcessOutcome::Respond(Response::Simple("OK".into()))
             },
-            Command::GET {key} => Ok(ProcessOutcome::Respond(Response::Simple(self.store.get(&key).await.unwrap_or_default()))),
+            Command::GET {key} => ProcessOutcome::Respond(Response::Simple(self.store.get(&key).await.unwrap_or_default())),
             Command::DEL {key} => {
                 let deleted = self.store.del(&key).await
                 .map(|_| "1")
                 .unwrap_or("0");
-                Ok(ProcessOutcome::Respond(Response::Simple(deleted.into())))
+                ProcessOutcome::Respond(Response::Simple(deleted.into()))
             }
         }
     }
 
-    #[allow(dead_code)]
     async fn send_response(&mut self, response: Response) -> Result<(), Error> {
-        todo!()
+        let message_text = match response {
+            Response::Error(inner) => format!("ERR {}\n", inner),
+            Response::Simple(inner)=> format!("{}\n", inner)
+        };
+        self.writer.write_all(message_text.as_bytes()).await?;
+        self.writer.flush().await?;
+        Ok(())
     }
 
-    #[allow(dead_code)] 
-    async fn run(&mut self, response: Response) -> Result<(), Error> {
-        todo!()
+    pub async fn run(&mut self) -> Result<(), Error> {
+        loop {
+            let outcome = match self.read_command().await {
+                Ok(None) => break,
+                Ok(Some(Command::NOOP)) => continue,
+                Ok(Some(command)) => self.process_command(command).await,
+                Err(Error::UnknownCommand) => ProcessOutcome::Respond(Response::Error("Unknown Command".into())),
+                Err(Error::WrongArity { command:_, given:_, expected:_ }) => ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into())),
+                Err(Error::Io(_e)) => break,
+            };
+            match outcome {
+                ProcessOutcome::Noop => continue,
+                ProcessOutcome::Quit => break,
+                ProcessOutcome::Respond(r) => self.send_response(r).await?
+            }
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::{AsyncWriteExt, DuplexStream, Sink, duplex};
+    use tokio::io::{AsyncWriteExt, DuplexStream, Sink, duplex, split, sink};
 
     use super::*;
 
@@ -119,7 +136,7 @@ mod tests {
 
     fn setup_dummy_connection () -> Connection<tokio::io::Empty, Sink> {
         let store:Store = Store::new();
-        Connection::new(tokio::io::empty(), tokio::io::sink(), store)
+        Connection::new(tokio::io::empty(), sink(), store)
     }
 
     #[tokio::test]
@@ -240,52 +257,165 @@ mod tests {
     #[tokio::test]
     async fn responds_to_ping () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::PING).await.unwrap();
+        let response = conn.process_command(Command::PING).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("PONG".to_string())))
     }
 
     #[tokio::test]
     async fn noop_gives_noop_outcome () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::NOOP).await.unwrap();
+        let response = conn.process_command(Command::NOOP).await;
         assert_eq!(response, ProcessOutcome::Noop)
     }
 
     #[tokio::test]
     async fn set_sends_ok_response () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
+        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("OK".into())))
     }
 
     #[tokio::test]
     async fn set_then_get () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
+        let response = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("OK".into())));
-        let response = conn.process_command(Command::GET { key: "mykey".into() }).await.unwrap();
+        let response = conn.process_command(Command::GET { key: "mykey".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("myvalue".into())))
     }
 
     #[tokio::test]
     async fn get_nonexistent_key_returns_empty_string_response () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::GET { key: "mykey".into() }).await.unwrap();
+        let response = conn.process_command(Command::GET { key: "mykey".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple(String::new())))
     }
 
     #[tokio::test]
     async fn delete_existing_key () {
         let mut conn = setup_dummy_connection();
-        let _ = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await.unwrap();
-        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await.unwrap();
+        let _ = conn.process_command(Command::SET { key: "mykey".into(), value: "myvalue".into() }).await;
+        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("1".into())))
     }
 
     #[tokio::test]
     async fn delete_nonexistent_key () {
         let mut conn = setup_dummy_connection();
-        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await.unwrap();
+        let response = conn.process_command(Command::DEL { key: "mykey".into() }).await;
         assert_eq!(response, ProcessOutcome::Respond(Response::Simple("0".into())))
+    }
+
+    #[tokio::test]
+    async fn send_response () {
+        let (client, server) = tokio::io::duplex(64);
+        let mut client_reader = BufReader::new(client);
+        let store = Store::new();
+        let mut conn = Connection::new(tokio::io::empty(), server, store);
+        conn.send_response(Response::Simple("OK".into())).await.unwrap();
+        let mut buf = String::new();
+        client_reader.read_line(&mut buf).await.unwrap();
+        assert_eq!(buf, "OK\n".to_string());
+        conn.send_response(Response::Error("Test".into())).await.unwrap();
+        let mut buf = String::new();
+        client_reader.read_line(&mut buf).await.unwrap();
+        assert_eq!(buf, "ERR Test\n".to_string());
+    }
+
+    struct TestCase <'a> {
+        call: &'a str,
+        response: &'a str,
+        expected: &'a str
+    }
+
+    #[tokio::test]
+    async fn e2e_run () {
+        let test_cases = vec![
+            TestCase{
+                call: "PING\n",
+                response: "PONG\n",
+                expected: "Should respond to PING with PONG"
+            },
+            TestCase{
+                call: "SET mykey myvalue\n",
+                response: "OK\n",
+                expected: "Should respond to SET with OK"
+            },
+            TestCase{
+                call: "GET mykey\n",
+                response: "myvalue\n",
+                expected: "Should retrieve value of mykey: myvalue"
+            },
+            TestCase{
+                call: "GET otherkey\n",
+                response: "\n",
+                expected: "Empty keys return empty lines"
+            },
+            TestCase{
+                call: "DEL mykey\n",
+                response: "1\n",
+                expected: "Should return 1 if key is successfully deleted"
+            },
+            TestCase{
+                call: "DEL mykey\n",
+                response: "0\n",
+                expected: "Should return 0 if DEL called on a key with no value"
+            },
+            TestCase{
+                call: "FOO\n",
+                response: "ERR Unknown Command\n",
+                expected: "Unknown command gives error"
+            },
+            TestCase{
+                call: "SET mykey myvalue too many\n",
+                response: "ERR Wrong number of arguments\n",
+                expected: "Wrong number of arguments gives error"
+            },
+            TestCase{
+                call: "GET\n",
+                response: "ERR Wrong number of arguments\n",
+                expected: "Wrong number of arguments gives error"
+            },
+        ];
+        
+
+        let (client, server) = tokio::io::duplex(128);
+        let (reader, writer) = split(server);
+        let store = Store::new();
+        let mut conn = Connection::new(reader, writer, store);
+
+        let (reader, writer) = split(client);
+
+        let mut reader = BufReader::new(reader);
+        let mut writer = BufWriter::new(writer);
+
+        let handle = tokio::spawn(async move {
+            conn.run().await
+        });
+
+
+        for TestCase{call, response, expected} in test_cases {
+            writer.write_all(call.as_bytes()).await.unwrap();
+            writer.flush().await.unwrap();
+            let read_buffer = &mut String::new();
+            reader.read_line(read_buffer).await.unwrap();
+            assert_eq!(response, read_buffer, "{}", expected);
+        }
+
+
+        let read_buffer = &mut String::new();
+        writer.write_all("\n".as_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+        writer.write_all("PING\n".as_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+        reader.read_line(read_buffer).await.unwrap();
+        assert_eq!(read_buffer, "PONG\n", "NOOP should not return anything");
+
+        let read_buffer = &mut String::new();
+        writer.write_all("QUIT\n".as_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+        assert_eq!(reader.read_line(read_buffer).await.unwrap(), 0, "QUIT should close connection");
+
+        handle.await.unwrap().unwrap();
     }
 }

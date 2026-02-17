@@ -6,6 +6,7 @@ const ADDR: &str = "127.0.0.1:6379";
 
 
 #[tokio::main]
+#[allow(unused_variables)]
 async fn main() -> Result<()> {
     let listener = TcpListener::bind(ADDR).await?;
     let store: Store;
