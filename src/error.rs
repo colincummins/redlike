@@ -1,7 +1,7 @@
 #[derive(Debug)]
 pub enum Error {
     Io(tokio::io::Error),
-    WrongArity{
+    WrongArity {
         command: String,
         given: usize,
         expected: usize,
