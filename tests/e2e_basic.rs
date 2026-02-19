@@ -13,14 +13,41 @@ struct TestCase<'a> {
     expected: &'a str,
 }
 
-async fn setup() -> (BufReader<OwnedReadHalf>, BufWriter<OwnedWriteHalf>) {
+struct TestClient {
+    reader: BufReader<OwnedReadHalf>,
+    writer: BufWriter<OwnedWriteHalf>,
+}
+
+impl TestClient {
+    async fn write(&mut self, message: &str) {
+        self.writer.write_all(message.as_bytes()).await.unwrap();
+        self.writer.flush().await.unwrap()
+    }
+
+    async fn read_line(&mut self) -> String {
+        let mut buf = String::new();
+        self.reader.read_line(&mut buf).await.unwrap();
+        buf
+    }
+
+    async fn send_quit(&mut self) {
+        self.write("QUIT\n").await;
+    }
+
+    async fn new(addr: &str) -> Self {
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let (read_half, write_half) = stream.into_split();
+        TestClient {
+            reader: BufReader::new(read_half),
+            writer: BufWriter::new(write_half),
+        }
+    }
+}
+
+async fn setup() -> TestClient {
     tokio::spawn(run_server(ADDR));
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let stream = TcpStream::connect(ADDR).await.unwrap();
-    let (read_half, write_half) = stream.into_split();
-    let reader = BufReader::new(read_half);
-    let writer = BufWriter::new(write_half);
-    (reader, writer)
+    TestClient::new(ADDR).await
 }
 
 #[tokio::test]
@@ -73,8 +100,7 @@ async fn e2e_sequential() {
         },
     ];
 
-    let (mut reader, mut writer) = setup().await;
-    let mut read_buffer = String::new();
+    let mut client = setup().await;
 
     for TestCase {
         call,
@@ -82,28 +108,26 @@ async fn e2e_sequential() {
         expected,
     } in test_case_sequential
     {
-        writer.write_all(call.as_bytes()).await.unwrap();
-        writer.flush().await.unwrap();
-        reader.read_line(&mut read_buffer).await.unwrap();
-        assert!(response == read_buffer, "Failed: {}", expected);
-        read_buffer.clear();
+        client.write(call).await;
+        let received = client.read_line().await;
+        assert!(
+            response == received,
+            "{} - Expected {}, Received {}",
+            expected,
+            response,
+            received
+        );
     }
 
-    writer.write_all(b"QUIT\n").await.unwrap();
-    writer.flush().await.unwrap();
+    client.send_quit().await
 }
 
 #[tokio::test]
 async fn e2e_blank_line_gets_no_response() {
-    let (mut reader, mut writer) = setup().await;
-    let mut read_buffer = String::new();
+    let mut client = setup().await;
 
-    writer.write_all(b"\n").await.unwrap();
-    writer.flush().await.unwrap();
-    writer.write_all(b"PING\n").await.unwrap();
-    writer.flush().await.unwrap();
-    reader.read_line(&mut read_buffer).await.unwrap();
-    assert!("PONG\n" == read_buffer);
-    writer.write_all(b"QUIT\n").await.unwrap();
-    writer.flush().await.unwrap();
+    client.write("\n").await;
+    client.write("PING\n").await;
+    assert!("PONG\n" == client.read_line().await);
+    client.send_quit().await
 }
