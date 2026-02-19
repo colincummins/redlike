@@ -1,15 +1,26 @@
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
 
 use redlike::server::run_server;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 const ADDR: &str = "127.0.0.1:6379";
 
 struct TestCase<'a> {
     call: &'a str,
     response: &'a str,
     expected: &'a str,
+}
+
+async fn setup() -> (BufReader<OwnedReadHalf>, BufWriter<OwnedWriteHalf>) {
+    tokio::spawn(run_server(ADDR));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let stream = TcpStream::connect(ADDR).await.unwrap();
+    let (read_half, write_half) = stream.into_split();
+    let reader = BufReader::new(read_half);
+    let writer = BufWriter::new(write_half);
+    (reader, writer)
 }
 
 #[tokio::test]
@@ -62,13 +73,7 @@ async fn e2e_concurrency() {
         },
     ];
 
-    tokio::spawn(run_server(ADDR));
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let mut stream = TcpStream::connect(ADDR).await.unwrap();
-    let (read_half, write_half) = stream.split();
-    let mut reader = BufReader::new(read_half);
-    let mut writer = BufWriter::new(write_half);
-
+    let (mut reader, mut writer) = setup().await;
     let mut read_buffer = String::new();
 
     for TestCase {
