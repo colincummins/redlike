@@ -24,7 +24,7 @@ async fn setup() -> (BufReader<OwnedReadHalf>, BufWriter<OwnedWriteHalf>) {
 }
 
 #[tokio::test]
-async fn e2e_concurrency() {
+async fn e2e_sequential() {
     let test_case_sequential: Vec<TestCase> = vec![
         TestCase {
             call: "PING\n",
@@ -89,6 +89,21 @@ async fn e2e_concurrency() {
         read_buffer.clear();
     }
 
+    writer.write_all(b"QUIT\n").await.unwrap();
+    writer.flush().await.unwrap();
+}
+
+#[tokio::test]
+async fn e2e_blank_line_gets_no_response() {
+    let (mut reader, mut writer) = setup().await;
+    let mut read_buffer = String::new();
+
+    writer.write_all(b"\n").await.unwrap();
+    writer.flush().await.unwrap();
+    writer.write_all(b"PING\n").await.unwrap();
+    writer.flush().await.unwrap();
+    reader.read_line(&mut read_buffer).await.unwrap();
+    assert!("PONG\n" == read_buffer);
     writer.write_all(b"QUIT\n").await.unwrap();
     writer.flush().await.unwrap();
 }
