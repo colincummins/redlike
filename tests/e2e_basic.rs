@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use tokio::io::{BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
 
 use redlike::server::run_server;
@@ -66,6 +66,24 @@ async fn e2e_concurrency() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     let mut stream = TcpStream::connect(ADDR).await.unwrap();
     let (read_half, write_half) = stream.split();
-    let reader = BufReader::new(read_half);
-    let writer = BufWriter::new(write_half);
+    let mut reader = BufReader::new(read_half);
+    let mut writer = BufWriter::new(write_half);
+
+    let mut read_buffer = String::new();
+
+    for TestCase {
+        call,
+        response,
+        expected,
+    } in test_case_sequential
+    {
+        writer.write_all(call.as_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+        reader.read_line(&mut read_buffer).await.unwrap();
+        assert!(response == read_buffer, "Failed: {}", expected);
+        read_buffer.clear();
+    }
+
+    writer.write_all(b"QUIT\n").await.unwrap();
+    writer.flush().await.unwrap();
 }
