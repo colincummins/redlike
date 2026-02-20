@@ -1,73 +1,8 @@
-use std::net::SocketAddr;
-use std::time::Duration;
-
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tokio::net::{TcpListener, TcpStream};
-
+mod common;
+use common::setup_test_server_and_test_client::setup_test_server_and_client;
+use common::test_case::TestCase;
 use redlike::server::server_from_listener;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::task::JoinHandle;
 const ADDR: &str = "127.0.0.1:0";
-const CONNECTION_WAIT_TIME_MS: u64 = 500;
-const CONNECTION_TIMEOUT_SEC: u64 = 5;
-
-struct TestCase<'a> {
-    call: &'a str,
-    response: &'a str,
-    expected: &'a str,
-}
-
-struct TestClient {
-    reader: BufReader<OwnedReadHalf>,
-    writer: BufWriter<OwnedWriteHalf>,
-}
-
-impl TestClient {
-    async fn write(&mut self, message: &str) -> tokio::io::Result<()> {
-        self.writer.write_all(message.as_bytes()).await?;
-        self.writer.flush().await?;
-        Ok(())
-    }
-
-    async fn read_line(&mut self) -> tokio::io::Result<String> {
-        let mut buf = String::new();
-        self.reader.read_line(&mut buf).await?;
-        Ok(buf)
-    }
-
-    async fn send_quit(&mut self) -> tokio::io::Result<()> {
-        self.write("QUIT\n").await
-    }
-
-    async fn new(addr: SocketAddr) -> tokio::io::Result<Self> {
-        let stream = tokio::time::timeout(Duration::from_secs(CONNECTION_TIMEOUT_SEC), async {
-            loop {
-                match TcpStream::connect(addr).await {
-                    Err(_) => {
-                        tokio::time::sleep(Duration::from_millis(CONNECTION_WAIT_TIME_MS)).await
-                    }
-                    Ok(s) => return s,
-                }
-            }
-        })
-        .await?;
-
-        let (read_half, write_half) = stream.into_split();
-        Ok(TestClient {
-            reader: BufReader::new(read_half),
-            writer: BufWriter::new(write_half),
-        })
-    }
-}
-
-async fn setup(
-    listener_address: &str,
-) -> Result<(TestClient, JoinHandle<Result<(), tokio::io::Error>>), tokio::io::Error> {
-    let listener = TcpListener::bind(listener_address).await.unwrap();
-    let addr: SocketAddr = listener.local_addr().unwrap();
-    let handle = tokio::spawn(server_from_listener(listener));
-    Ok((TestClient::new(addr).await?, handle))
-}
 
 #[tokio::test]
 async fn e2e_sequential() -> tokio::io::Result<()> {
@@ -119,7 +54,7 @@ async fn e2e_sequential() -> tokio::io::Result<()> {
         },
     ];
 
-    let (mut client, handle) = setup(ADDR).await?;
+    let (mut client, handle) = setup_test_server_and_client(ADDR).await?;
 
     for TestCase {
         call,
@@ -145,7 +80,7 @@ async fn e2e_sequential() -> tokio::io::Result<()> {
 
 #[tokio::test]
 async fn e2e_blank_line_gets_no_response() -> tokio::io::Result<()> {
-    let (mut client, handle) = setup(ADDR).await?;
+    let (mut client, handle) = setup_test_server_and_client(ADDR).await?;
 
     client.write("\n").await?;
     client.write("PING\n").await?;
