@@ -145,9 +145,7 @@ async fn e2e_sequential() -> tokio::io::Result<()> {
 
 #[tokio::test]
 async fn e2e_blank_line_gets_no_response() -> tokio::io::Result<()> {
-    let (mut client, handle) = setup(ADDR)
-        .await
-        .expect("Unable to create server and client");
+    let (mut client, handle) = setup(ADDR).await?;
 
     client.write("\n").await?;
     client.write("PING\n").await?;
