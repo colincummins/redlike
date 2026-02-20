@@ -1,23 +1,9 @@
-use tokio::net::{TcpListener};
-use tokio::io::Result;
-use redlike::store::Store;
-
+use redlike::server::run_server;
 const ADDR: &str = "127.0.0.1:6379";
-
 
 #[tokio::main]
 #[allow(unused_variables)]
-async fn main() -> Result<()> {
-    let listener = TcpListener::bind(ADDR).await?;
-    let store: Store;
-
-    loop {
-        match listener.accept().await {
-            Ok((mut _socket, addr)) => {
-                println!("new client: {:?}", addr);
-            },
-            Err(e) => println!("client couldn't connect: {:?}", e)
-        }
-    }
-
+async fn main() -> Result<(), std::io::Error> {
+    let (_address, handle) = run_server(ADDR).await?;
+    handle.await?
 }
