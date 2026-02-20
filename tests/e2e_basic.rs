@@ -1,11 +1,13 @@
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 
-use redlike::server::run_server;
+use redlike::server::server_from_listener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-const ADDR: &str = "127.0.0.1:6379";
+use tokio::task::JoinHandle;
+const ADDR: &str = "127.0.0.1:0";
 
 struct TestCase<'a> {
     call: &'a str,
@@ -34,7 +36,7 @@ impl TestClient {
         self.write("QUIT\n").await;
     }
 
-    async fn new(addr: &str) -> Self {
+    async fn new(addr: SocketAddr) -> Self {
         let stream = TcpStream::connect(addr).await.unwrap();
         let (read_half, write_half) = stream.into_split();
         TestClient {
@@ -44,10 +46,12 @@ impl TestClient {
     }
 }
 
-async fn setup() -> TestClient {
-    tokio::spawn(run_server(ADDR));
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    TestClient::new(ADDR).await
+async fn setup(listener_address: &str) -> (TestClient, JoinHandle<Result<(), tokio::io::Error>>) {
+    let listener = TcpListener::bind(listener_address).await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(server_from_listener(listener));
+    tokio::task::yield_now().await;
+    (TestClient::new(addr).await, handle)
 }
 
 #[tokio::test]
@@ -100,7 +104,7 @@ async fn e2e_sequential() {
         },
     ];
 
-    let mut client = setup().await;
+    let (mut client, handle) = setup(ADDR).await;
 
     for TestCase {
         call,
@@ -119,15 +123,17 @@ async fn e2e_sequential() {
         );
     }
 
-    client.send_quit().await
+    client.send_quit().await;
+    handle.abort()
 }
 
 #[tokio::test]
 async fn e2e_blank_line_gets_no_response() {
-    let mut client = setup().await;
+    let (mut client, handle) = setup(ADDR).await;
 
     client.write("\n").await;
     client.write("PING\n").await;
     assert!("PONG\n" == client.read_line().await);
-    client.send_quit().await
+    client.send_quit().await;
+    handle.abort()
 }

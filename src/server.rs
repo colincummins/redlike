@@ -1,10 +1,12 @@
+use std::net::SocketAddr;
+
 use crate::connection::Connection;
 use crate::store::Store;
 use tokio::io::Result;
 use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 
-pub async fn run_server(listener_address: &str) -> Result<()> {
-    let listener = TcpListener::bind(listener_address).await?;
+pub async fn server_from_listener(listener: TcpListener) -> Result<()> {
     let store = Store::new();
 
     loop {
@@ -22,4 +24,11 @@ pub async fn run_server(listener_address: &str) -> Result<()> {
             Err(e) => println!("client couldn't connect: {:?}", e),
         }
     }
+}
+
+pub async fn run_server(listener_address: &str) -> Result<(SocketAddr, JoinHandle<Result<()>>)> {
+    let listener = TcpListener::bind(listener_address).await?;
+    let addr: SocketAddr = listener.local_addr()?;
+    let handle = tokio::spawn(server_from_listener(listener));
+    Ok((addr, handle))
 }
