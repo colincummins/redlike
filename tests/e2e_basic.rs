@@ -8,6 +8,8 @@ use redlike::server::server_from_listener;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::task::JoinHandle;
 const ADDR: &str = "127.0.0.1:0";
+const CONNECTION_WAIT_TIME_MS: u64 = 500;
+const CONNECTION_TIMEOUT_SEC: u64 = 5;
 
 struct TestCase<'a> {
     call: &'a str,
@@ -21,41 +23,54 @@ struct TestClient {
 }
 
 impl TestClient {
-    async fn write(&mut self, message: &str) {
-        self.writer.write_all(message.as_bytes()).await.unwrap();
-        self.writer.flush().await.unwrap()
+    async fn write(&mut self, message: &str) -> tokio::io::Result<()> {
+        self.writer.write_all(message.as_bytes()).await?;
+        self.writer.flush().await?;
+        Ok(())
     }
 
-    async fn read_line(&mut self) -> String {
+    async fn read_line(&mut self) -> tokio::io::Result<String> {
         let mut buf = String::new();
-        self.reader.read_line(&mut buf).await.unwrap();
-        buf
+        self.reader.read_line(&mut buf).await?;
+        Ok(buf)
     }
 
-    async fn send_quit(&mut self) {
-        self.write("QUIT\n").await;
+    async fn send_quit(&mut self) -> tokio::io::Result<()> {
+        self.write("QUIT\n").await
     }
 
-    async fn new(addr: SocketAddr) -> Self {
-        let stream = TcpStream::connect(addr).await.unwrap();
+    async fn new(addr: SocketAddr) -> tokio::io::Result<Self> {
+        let stream = tokio::time::timeout(Duration::from_secs(CONNECTION_TIMEOUT_SEC), async {
+            loop {
+                match TcpStream::connect(addr).await {
+                    Err(_) => {
+                        tokio::time::sleep(Duration::from_millis(CONNECTION_WAIT_TIME_MS)).await
+                    }
+                    Ok(s) => return s,
+                }
+            }
+        })
+        .await?;
+
         let (read_half, write_half) = stream.into_split();
-        TestClient {
+        Ok(TestClient {
             reader: BufReader::new(read_half),
             writer: BufWriter::new(write_half),
-        }
+        })
     }
 }
 
-async fn setup(listener_address: &str) -> (TestClient, JoinHandle<Result<(), tokio::io::Error>>) {
+async fn setup(
+    listener_address: &str,
+) -> Result<(TestClient, JoinHandle<Result<(), tokio::io::Error>>), tokio::io::Error> {
     let listener = TcpListener::bind(listener_address).await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     let handle = tokio::spawn(server_from_listener(listener));
-    tokio::task::yield_now().await;
-    (TestClient::new(addr).await, handle)
+    Ok((TestClient::new(addr).await?, handle))
 }
 
 #[tokio::test]
-async fn e2e_sequential() {
+async fn e2e_sequential() -> tokio::io::Result<()> {
     let test_case_sequential: Vec<TestCase> = vec![
         TestCase {
             call: "PING\n",
@@ -104,7 +119,7 @@ async fn e2e_sequential() {
         },
     ];
 
-    let (mut client, handle) = setup(ADDR).await;
+    let (mut client, handle) = setup(ADDR).await?;
 
     for TestCase {
         call,
@@ -112,8 +127,8 @@ async fn e2e_sequential() {
         expected,
     } in test_case_sequential
     {
-        client.write(call).await;
-        let received = client.read_line().await;
+        client.write(call).await?;
+        let received = client.read_line().await?;
         assert!(
             response == received,
             "{} - Expected {}, Received {}",
@@ -123,17 +138,21 @@ async fn e2e_sequential() {
         );
     }
 
-    client.send_quit().await;
-    handle.abort()
+    client.send_quit().await?;
+    handle.abort();
+    Ok(())
 }
 
 #[tokio::test]
-async fn e2e_blank_line_gets_no_response() {
-    let (mut client, handle) = setup(ADDR).await;
+async fn e2e_blank_line_gets_no_response() -> tokio::io::Result<()> {
+    let (mut client, handle) = setup(ADDR)
+        .await
+        .expect("Unable to create server and client");
 
-    client.write("\n").await;
-    client.write("PING\n").await;
-    assert!("PONG\n" == client.read_line().await);
-    client.send_quit().await;
-    handle.abort()
+    client.write("\n").await?;
+    client.write("PING\n").await?;
+    assert!("PONG\n" == client.read_line().await?);
+    client.send_quit().await?;
+    handle.abort();
+    Ok(())
 }
