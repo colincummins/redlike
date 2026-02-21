@@ -1,5 +1,5 @@
 mod common;
-use common::setup_test_server_and_test_client::setup_test_server_and_client;
+use common::setup_test_server_and_test_client::setup_test_server_and_test_client;
 use common::test_case::TestCase;
 use redlike::server::server_from_listener;
 const ADDR: &str = "127.0.0.1:0";
@@ -54,7 +54,7 @@ async fn e2e_sequential() -> tokio::io::Result<()> {
         },
     ];
 
-    let (mut client, handle) = setup_test_server_and_client(ADDR).await?;
+    let (mut client, handle) = setup_test_server_and_test_client(ADDR).await?;
 
     for TestCase {
         call,
@@ -80,7 +80,7 @@ async fn e2e_sequential() -> tokio::io::Result<()> {
 
 #[tokio::test]
 async fn e2e_blank_line_gets_no_response() -> tokio::io::Result<()> {
-    let (mut client, handle) = setup_test_server_and_client(ADDR).await?;
+    let (mut client, handle) = setup_test_server_and_test_client(ADDR).await?;
 
     client.write("\n").await?;
     client.write("PING\n").await?;

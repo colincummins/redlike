@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
-pub async fn setup_test_server_and_client(
+pub async fn setup_test_server_and_test_client(
     listener_address: &str,
 ) -> Result<(TestClient, JoinHandle<Result<(), tokio::io::Error>>), tokio::io::Error> {
     let listener = TcpListener::bind(listener_address).await.unwrap();
