@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::string::ParseError;
 
 enum Frame {
     SimpleString(String),
@@ -7,14 +7,28 @@ enum Frame {
     Array(Option<Vec<Frame>>),
 }
 
-struct Start;
-struct ReadingLine;
-struct ReadingBulkData;
-
-struct ParserShared {
-    bytes_consumed: usize,
+enum State {
+    Start,
+    ReadingLine,
+    ReadingBulk,
+    ReadingSize,
+    ReadingArray,
 }
-struct Parser<T> {
-    shared: ParserShared,
-    state: PhantomData<T>,
+
+struct Parser {
+    state: State,
+}
+
+impl Parser {
+    fn parse(&self, buf: &[u8]) -> Result<Option<(Frame, usize)>, ParseError> {
+        match self.state {
+            State::Start => {
+                if let Some(first_character) = buf.get(0) {
+                } else {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(None)
+    }
 }
