@@ -1,4 +1,10 @@
-use std::arch::x86_64::_SIDD_NEGATIVE_POLARITY;
+#[derive(Debug, PartialEq, Clone)]
+enum ParseError {
+    UnreadableUtf,
+    InvalidBulkLength,
+    InvalidArrayLength,
+    UnreadableBulkString,
+}
 
 #[derive(Debug, PartialEq)]
 enum Frame {
@@ -12,19 +18,9 @@ enum Frame {
 enum State {
     Start,
     ReadingSimpleString,
-    ReadingLine,
     ReadingBulkLength,
     ReadingBulkString(usize),
-    ReadingArrayLength,
-    ReadingArray(usize, Vec<Frame>),
-}
-
-#[derive(Debug, PartialEq)]
-enum ParseError {
-    UnreadableUtf,
-    InvalidBulkLength,
-    InvalidArrayLength,
-    UnreadableBulkString,
+    Error(ParseError),
 }
 
 #[derive(Debug, PartialEq)]
@@ -41,8 +37,18 @@ impl Parser {
         }
     }
 
-    fn parse<'a>(&mut self, input: &[u8]) -> Result<Option<Frame>, ParseError> {
+    fn set_error(&mut self, err: ParseError) -> ParseError {
+        self.state = State::Error(err.clone());
+        err
+    }
+
+    fn parse(&mut self, input: &[u8]) -> Result<Option<Frame>, ParseError> {
+        if let State::Error(ref e) = self.state {
+            return Err(e.clone());
+        }
+
         self.buf.extend_from_slice(input);
+
         loop {
             match self.state {
                 State::Start => match self.buf.first() {
@@ -66,10 +72,10 @@ impl Parser {
                         None => return Ok(None),
                     };
                     let bytes: Vec<u8> = self.buf.drain(..pos).collect();
-                    let payload =
-                        String::from_utf8(bytes).map_err(|_| ParseError::UnreadableUtf)?;
-                    self.state = State::Start;
+                    let payload = String::from_utf8(bytes)
+                        .map_err(|_| self.set_error(ParseError::UnreadableUtf))?;
                     self.buf.drain(..2);
+                    self.state = State::Start;
                     return Ok(Some(Frame::SimpleString(payload)));
                 }
 
@@ -78,21 +84,26 @@ impl Parser {
                         Some(pos) => pos,
                         None => return Ok(None),
                     };
-                    let bulk_length: i64 = str::from_utf8(&self.buf[..pos])
-                        .map_err(|_| ParseError::InvalidBulkLength)?
-                        .parse()
-                        .map_err(|_| ParseError::InvalidBulkLength)?;
+                    let slice = &self.buf[..pos];
+                    let utf8_res: Result<&str, _> = std::str::from_utf8(slice);
+                    let s = match utf8_res {
+                        Ok(s) => s,
+                        Err(_) => return Err(self.set_error(ParseError::InvalidBulkLength)),
+                    };
+                    let bulk_length: i64 = match s.parse() {
+                        Ok(v) => v,
+                        Err(_) => return Err(self.set_error(ParseError::InvalidBulkLength)),
+                    };
                     if bulk_length == -1 {
                         self.buf.drain(..pos + 2);
                         self.state = State::Start;
                         return Ok(Some(Frame::Bulk(None)));
                     }
                     if bulk_length < -1 {
-                        return Err(ParseError::InvalidBulkLength);
+                        return Err(self.set_error(ParseError::InvalidBulkLength));
                     }
-                    let bulk_length =
-                        usize::try_from(bulk_length).map_err(|_| ParseError::InvalidBulkLength)?;
-
+                    let bulk_length = usize::try_from(bulk_length)
+                        .map_err(|_| self.set_error(ParseError::InvalidBulkLength))?;
                     self.buf.drain(..pos + 2);
                     self.state = State::ReadingBulkString(bulk_length);
                     continue;
@@ -100,20 +111,20 @@ impl Parser {
 
                 State::ReadingBulkString(bulk_length) => {
                     if bulk_length + 2 > self.buf.len() {
-                        self.state = State::Start;
                         return Ok(None);
                     }
                     if self.buf[bulk_length] != b'\r' || self.buf[bulk_length + 1] != b'\n' {
-                        return Err(ParseError::UnreadableBulkString);
+                        return Err(self.set_error(ParseError::UnreadableBulkString));
                     }
-
                     let payload = self.buf.drain(..bulk_length).collect();
                     self.buf.drain(..2);
                     self.state = State::Start;
                     return Ok(Some(Frame::Bulk(Some(payload))));
                 }
 
-                _ => return Ok(None),
+                State::Error(ref e) => {
+                    return Err(e.clone());
+                }
             }
         }
     }
@@ -197,6 +208,7 @@ mod tests {
             let mut p = Parser::new();
             let buf = b"$-2\r\n";
             assert_eq!(p.parse(buf), Err(ParseError::InvalidBulkLength));
+            assert_eq!(p.state, State::Error(ParseError::InvalidBulkLength))
         }
 
         #[test]
@@ -218,6 +230,7 @@ mod tests {
             let mut p = Parser::new();
             let buf = b"$5\r\nhellothere\r\n";
             assert_eq!(p.parse(buf), Err(ParseError::UnreadableBulkString));
+            assert_eq!(p.state, State::Error(ParseError::UnreadableBulkString));
         }
 
         #[test]
@@ -225,6 +238,7 @@ mod tests {
             let mut p = Parser::new();
             let buf = b"$5\r\nhellothere\r\n";
             assert_eq!(p.parse(buf), Err(ParseError::UnreadableBulkString));
+            assert_eq!(p.state, State::Error(ParseError::UnreadableBulkString));
         }
 
         #[test]
