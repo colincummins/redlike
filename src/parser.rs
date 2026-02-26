@@ -14,7 +14,7 @@ enum State {
     ReadingSimpleString,
     ReadingLine,
     ReadingBulkLength,
-    ReadingBulk(usize),
+    ReadingBulkString(usize),
     ReadingArrayLength,
     ReadingArray(usize, Vec<Frame>),
 }
@@ -89,11 +89,11 @@ impl Parser {
                         usize::try_from(bulk_length).map_err(|_| ParseError::InvalidBulkLength)?;
 
                     input = &input[pos + 2..];
-                    self.state = State::ReadingBulk(bulk_length);
+                    self.state = State::ReadingBulkString(bulk_length);
                     continue;
                 }
 
-                State::ReadingBulk(bulk_length) => {
+                State::ReadingBulkString(bulk_length) => {
                     if bulk_length + 2 > input.len() {
                         return Ok(None);
                     }
