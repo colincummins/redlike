@@ -13,17 +13,18 @@ enum State {
     Start,
     ReadingSimpleString,
     ReadingLine,
-    ReadingBulkLen,
-    ReadingBulkString(usize),
-    ReadingArraySize,
+    ReadingBulkLength,
+    ReadingBulk(usize),
+    ReadingArrayLength,
     ReadingArray(usize, Vec<Frame>),
 }
 
 #[derive(Debug, PartialEq)]
 enum ParseError {
-    ParseUtfError,
-    ParseBulkLengthError,
-    ParseBulkStringError,
+    UnreadableUtf,
+    InvalidBulkLength,
+    InvalidArrayLength,
+    UnreadableBulkString,
 }
 
 #[derive(Debug, PartialEq)]
@@ -48,7 +49,7 @@ impl Parser {
                         continue;
                     }
                     Some(b'$') => {
-                        self.state = State::ReadingBulkLen;
+                        self.state = State::ReadingBulkLength;
                         continue;
                     }
                     Some(_) => return Ok(None),
@@ -61,7 +62,7 @@ impl Parser {
                         None => return Ok(None),
                     };
                     let payload = std::str::from_utf8(&input[1..pos])
-                        .map_err(|_| ParseError::ParseUtfError)?;
+                        .map_err(|_| ParseError::UnreadableUtf)?;
                     self.state = State::Start;
                     return Ok(Some((
                         Frame::SimpleString(payload.to_owned()),
@@ -69,35 +70,35 @@ impl Parser {
                     )));
                 }
 
-                State::ReadingBulkLen => {
+                State::ReadingBulkLength => {
                     let pos = match input.windows(2).position(|w| w == b"\r\n") {
                         Some(pos) => pos,
                         None => return Ok(None),
                     };
                     let bulk_length: i64 = str::from_utf8(&input[1..pos])
-                        .map_err(|_| ParseError::ParseBulkLengthError)?
+                        .map_err(|_| ParseError::InvalidBulkLength)?
                         .parse()
-                        .map_err(|_| ParseError::ParseBulkLengthError)?;
+                        .map_err(|_| ParseError::InvalidBulkLength)?;
                     if bulk_length == -1 {
                         return Ok(Some((Frame::Bulk(None), &input[pos + 2..])));
                     }
                     if bulk_length < -1 {
-                        return Err(ParseError::ParseBulkLengthError);
+                        return Err(ParseError::InvalidBulkLength);
                     }
-                    let bulk_length = usize::try_from(bulk_length)
-                        .map_err(|_| ParseError::ParseBulkLengthError)?;
+                    let bulk_length =
+                        usize::try_from(bulk_length).map_err(|_| ParseError::InvalidBulkLength)?;
 
                     input = &input[pos + 2..];
-                    self.state = State::ReadingBulkString(bulk_length);
+                    self.state = State::ReadingBulk(bulk_length);
                     continue;
                 }
 
-                State::ReadingBulkString(bulk_length) => {
+                State::ReadingBulk(bulk_length) => {
                     if bulk_length + 2 > input.len() {
                         return Ok(None);
                     }
                     if input[bulk_length] != b'\r' || input[bulk_length + 1] != b'\n' {
-                        return Err(ParseError::ParseBulkStringError);
+                        return Err(ParseError::UnreadableBulkString);
                     }
 
                     return Ok(Some((
@@ -195,7 +196,7 @@ mod tests {
         fn out_of_bounds_length_returns_error() {
             let mut p = Parser::new();
             let buf = b"$-2\r\n";
-            assert_eq!(p.parse(buf), Err(ParseError::ParseBulkLengthError));
+            assert_eq!(p.parse(buf), Err(ParseError::InvalidBulkLength));
         }
 
         #[test]
@@ -219,14 +220,14 @@ mod tests {
         fn payload_continues_past_expected_length_gets_error() {
             let mut p = Parser::new();
             let buf = b"$5\r\nhellothere\r\n";
-            assert_eq!(p.parse(buf), Err(ParseError::ParseBulkStringError));
+            assert_eq!(p.parse(buf), Err(ParseError::UnreadableBulkString));
         }
 
         #[test]
         fn payload_is_not_terminated_at_expected_length_gets_error() {
             let mut p = Parser::new();
             let buf = b"$5\r\nhellothere\r\n";
-            assert_eq!(p.parse(buf), Err(ParseError::ParseBulkStringError));
+            assert_eq!(p.parse(buf), Err(ParseError::UnreadableBulkString));
         }
 
         #[test]
