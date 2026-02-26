@@ -45,12 +45,14 @@ impl Parser {
         self.buf.extend_from_slice(input);
         loop {
             match self.state {
-                State::Start => match self.buf.drain(..1).next() {
+                State::Start => match self.buf.first() {
                     Some(b'+') => {
+                        self.buf.drain(..1);
                         self.state = State::ReadingSimpleString;
                         continue;
                     }
                     Some(b'$') => {
+                        self.buf.drain(..1);
                         self.state = State::ReadingBulkLength;
                         continue;
                     }
@@ -68,7 +70,7 @@ impl Parser {
                         String::from_utf8(bytes).map_err(|_| ParseError::UnreadableUtf)?;
                     self.state = State::Start;
                     self.buf.drain(..2);
-                    return Ok(Some(Frame::SimpleString(payload.to_owned())));
+                    return Ok(Some(Frame::SimpleString(payload)));
                 }
 
                 State::ReadingBulkLength => {
@@ -82,6 +84,7 @@ impl Parser {
                         .map_err(|_| ParseError::InvalidBulkLength)?;
                     if bulk_length == -1 {
                         self.buf.drain(..pos + 2);
+                        self.state = State::Start;
                         return Ok(Some(Frame::Bulk(None)));
                     }
                     if bulk_length < -1 {
@@ -97,6 +100,7 @@ impl Parser {
 
                 State::ReadingBulkString(bulk_length) => {
                     if bulk_length + 2 > self.buf.len() {
+                        self.state = State::Start;
                         return Ok(None);
                     }
                     if self.buf[bulk_length] != b'\r' || self.buf[bulk_length + 1] != b'\n' {
@@ -105,6 +109,7 @@ impl Parser {
 
                     let payload = self.buf.drain(..bulk_length).collect();
                     self.buf.drain(..2);
+                    self.state = State::Start;
                     return Ok(Some(Frame::Bulk(Some(payload))));
                 }
 
