@@ -30,20 +30,22 @@ enum ParseError {
 #[derive(Debug, PartialEq)]
 struct Parser {
     state: State,
+    buf: Vec<u8>,
 }
 
 impl Parser {
     fn new() -> Self {
         Parser {
             state: State::Start,
+            buf: Vec::new(),
         }
     }
 
-    fn parse<'a>(&mut self, buf: &'a [u8]) -> Result<Option<(Frame, &'a [u8])>, ParseError> {
-        let mut input = buf;
+    fn parse<'a>(&mut self, input: &[u8]) -> Result<Option<Frame>, ParseError> {
+        self.buf.extend_from_slice(input);
         loop {
             match self.state {
-                State::Start => match input.first() {
+                State::Start => match self.buf.drain(..1).next() {
                     Some(b'+') => {
                         self.state = State::ReadingSimpleString;
                         continue;
@@ -57,30 +59,30 @@ impl Parser {
                 },
 
                 State::ReadingSimpleString => {
-                    let pos = match input.windows(2).position(|w| w == b"\r\n") {
+                    let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
                         Some(pos) => pos,
                         None => return Ok(None),
                     };
-                    let payload = std::str::from_utf8(&input[1..pos])
-                        .map_err(|_| ParseError::UnreadableUtf)?;
+                    let bytes: Vec<u8> = self.buf.drain(..pos).collect();
+                    let payload =
+                        String::from_utf8(bytes).map_err(|_| ParseError::UnreadableUtf)?;
                     self.state = State::Start;
-                    return Ok(Some((
-                        Frame::SimpleString(payload.to_owned()),
-                        &input[pos + 2..],
-                    )));
+                    self.buf.drain(..2);
+                    return Ok(Some(Frame::SimpleString(payload.to_owned())));
                 }
 
                 State::ReadingBulkLength => {
-                    let pos = match input.windows(2).position(|w| w == b"\r\n") {
+                    let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
                         Some(pos) => pos,
                         None => return Ok(None),
                     };
-                    let bulk_length: i64 = str::from_utf8(&input[1..pos])
+                    let bulk_length: i64 = str::from_utf8(&self.buf[..pos])
                         .map_err(|_| ParseError::InvalidBulkLength)?
                         .parse()
                         .map_err(|_| ParseError::InvalidBulkLength)?;
                     if bulk_length == -1 {
-                        return Ok(Some((Frame::Bulk(None), &input[pos + 2..])));
+                        self.buf.drain(..pos + 2);
+                        return Ok(Some(Frame::Bulk(None)));
                     }
                     if bulk_length < -1 {
                         return Err(ParseError::InvalidBulkLength);
@@ -88,23 +90,22 @@ impl Parser {
                     let bulk_length =
                         usize::try_from(bulk_length).map_err(|_| ParseError::InvalidBulkLength)?;
 
-                    input = &input[pos + 2..];
+                    self.buf.drain(..pos + 2);
                     self.state = State::ReadingBulkString(bulk_length);
                     continue;
                 }
 
                 State::ReadingBulkString(bulk_length) => {
-                    if bulk_length + 2 > input.len() {
+                    if bulk_length + 2 > self.buf.len() {
                         return Ok(None);
                     }
-                    if input[bulk_length] != b'\r' || input[bulk_length + 1] != b'\n' {
+                    if self.buf[bulk_length] != b'\r' || self.buf[bulk_length + 1] != b'\n' {
                         return Err(ParseError::UnreadableBulkString);
                     }
 
-                    return Ok(Some((
-                        Frame::Bulk(Some(input[..bulk_length].to_vec())),
-                        &input[bulk_length + 2..],
-                    )));
+                    let payload = self.buf.drain(..bulk_length).collect();
+                    self.buf.drain(..2);
+                    return Ok(Some(Frame::Bulk(Some(payload))));
                 }
 
                 _ => return Ok(None),
@@ -132,10 +133,7 @@ mod tests {
         fn parse_empty_simple_string() {
             let mut p = Parser::new();
             let buf = b"+\r\n";
-            assert_eq!(
-                p.parse(buf),
-                Ok(Some((Frame::SimpleString("".to_string()), &b""[..])))
-            )
+            assert_eq!(p.parse(buf), Ok(Some(Frame::SimpleString("".to_string()))))
         }
 
         #[test]
@@ -144,7 +142,7 @@ mod tests {
             let buf = b"+OK\r\n";
             assert_eq!(
                 p.parse(buf),
-                Ok(Some((Frame::SimpleString("OK".to_string()), &b""[..])))
+                Ok(Some(Frame::SimpleString("OK".to_string())))
             )
         }
 
@@ -154,10 +152,7 @@ mod tests {
             let buf = b"+OK\r\n+OK\r\n";
             assert_eq!(
                 p.parse(buf),
-                Ok(Some((
-                    Frame::SimpleString("OK".to_string()),
-                    &b"+OK\r\n"[..]
-                )))
+                Ok(Some(Frame::SimpleString("OK".to_string())))
             )
         }
     }
@@ -167,14 +162,14 @@ mod tests {
         #[test]
         fn bulk_string_marker_only_returns_none() {
             let mut p = Parser::new();
-            let buf = b"$";
+            let buf = &b"$"[..];
             assert_eq!(p.parse(buf), Ok(None));
         }
 
         #[test]
         fn incomplete_length_returns_none() {
             let mut p = Parser::new();
-            let buf = b"$5";
+            let buf = &b"$5"[..];
             assert_eq!(p.parse(buf), Ok(None));
         }
 
@@ -203,17 +198,14 @@ mod tests {
         fn minus_one_returns_nil_bulk_string() {
             let mut p = Parser::new();
             let buf = b"$-1\r\n";
-            assert_eq!(p.parse(buf), Ok(Some((Frame::Bulk(None), &b""[..]))));
+            assert_eq!(p.parse(buf), Ok(Some(Frame::Bulk(None))))
         }
 
         #[test]
         fn zero_length_bulk_string() {
             let mut p = Parser::new();
             let buf = b"$0\r\n\r\n";
-            assert_eq!(
-                p.parse(buf),
-                Ok(Some((Frame::Bulk(Some(vec![])), &b""[..])))
-            );
+            assert_eq!(p.parse(buf), Ok(Some(Frame::Bulk(Some(vec![])))));
         }
 
         #[test]
@@ -234,13 +226,7 @@ mod tests {
         fn proper_payload_parsed_leaving_remaining_buffer() {
             let mut p = Parser::new();
             let buf = b"$5\r\nhello\r\nleftovers";
-            assert_eq!(
-                p.parse(buf),
-                Ok(Some((
-                    Frame::Bulk(Some(b"hello".to_vec())),
-                    &b"leftovers"[..]
-                )))
-            );
+            assert_eq!(p.parse(buf), Ok(Some(Frame::Bulk(Some(b"hello".to_vec())))));
         }
     }
 }
