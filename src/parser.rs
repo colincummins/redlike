@@ -137,16 +137,42 @@ impl Parser {
                     return Ok(Some(Frame::Bulk(Some(payload))));
                 }
 
-                State::Error(e) => {
-                    return Err(e.clone());
-                }
-
                 State::ReadingArrayLength => {
-                    todo!();
+                    let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
+                        Some(pos) => pos,
+                        None => return Ok(None),
+                    };
+                    let slice = &self.buf[..pos];
+                    let utf8_res: Result<&str, _> = std::str::from_utf8(slice);
+                    let s = match utf8_res {
+                        Ok(s) => s,
+                        Err(_) => return Err(self.set_error(ParseError::InvalidArrayLength)),
+                    };
+                    let array_length: i64 = match s.parse() {
+                        Ok(v) => v,
+                        Err(_) => return Err(self.set_error(ParseError::InvalidArrayLength)),
+                    };
+                    if array_length == -1 {
+                        self.buf.drain(..pos + 2);
+                        self.state = State::Start;
+                        return Ok(Some(Frame::Array(None)));
+                    }
+                    if array_length < -1 {
+                        return Err(self.set_error(ParseError::InvalidArrayLength));
+                    }
+                    let array_length = usize::try_from(array_length)
+                        .map_err(|_| self.set_error(ParseError::InvalidArrayLength))?;
+                    self.buf.drain(..pos + 2);
+                    self.state = State::ReadingArray(array_length, Vec::new());
+                    continue;
                 }
 
                 State::ReadingArray(array_length, array_builder) => {
                     todo!();
+                }
+
+                State::Error(e) => {
+                    return Err(e.clone());
                 }
             }
         }
@@ -260,6 +286,28 @@ mod tests {
             let buf = b"$5\r\nhello\r\nleftovers";
             assert_eq!(p.parse(buf), Ok(vec![Frame::Bulk(Some(b"hello".to_vec()))]));
             assert_eq!(p.buf, b"leftovers")
+        }
+
+        #[test]
+        fn handles_bulk_string_split_at_any_position() {
+            let mut p = Parser::new();
+            let full_buf = b"$5\r\nhello\r\n$7\r\nanother\r\n$4\r\nbulk\r\n";
+            for (i, _) in full_buf.iter().enumerate() {
+                let mut builder: Vec<Frame> = Vec::new();
+                let (left, right) = full_buf.split_at(i);
+                let mut result = p.parse(left).unwrap();
+                builder.append(&mut result);
+                let mut result = p.parse(right).unwrap();
+                builder.append(&mut result);
+                assert_eq!(
+                    builder,
+                    vec![
+                        Frame::Bulk(Some(b"hello".to_vec())),
+                        Frame::Bulk(Some(b"another".to_vec())),
+                        Frame::Bulk(Some(b"bulk".to_vec())),
+                    ]
+                )
+            }
         }
     }
 }
