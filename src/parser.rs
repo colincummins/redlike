@@ -1,8 +1,9 @@
+use std::fmt::Error;
+
 #[derive(Debug, PartialEq, Clone)]
 enum ParseError {
     UnreadableUtf,
-    InvalidBulkLength,
-    InvalidArrayLength,
+    InvalidLength,
     UnreadableBulkString,
 }
 
@@ -56,6 +57,20 @@ impl Parser {
         }
     }
 
+    fn read_length(&mut self) -> Result<Option<i64>, ParseError> {
+        let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
+            Some(pos) => pos,
+            None => return Ok(None),
+        };
+        let slice = &self.buf[..pos];
+        let value = std::str::from_utf8(slice)
+            .map_err(|_| ParseError::InvalidLength)?
+            .parse::<i64>()
+            .map_err(|_| ParseError::InvalidLength)?;
+        self.buf.drain(..pos + 2);
+        Ok(Some(value))
+    }
+
     fn try_parse_one_frame(&mut self) -> Result<Option<Frame>, ParseError> {
         if let State::Error(ref e) = self.state {
             return Err(e.clone());
@@ -97,37 +112,24 @@ impl Parser {
                 }
 
                 State::ReadingBulkLength => {
-                    let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
-                        Some(pos) => pos,
+                    let length = match self.read_length()? {
+                        Some(l) => l,
                         None => return Ok(None),
                     };
-                    let slice = &self.buf[..pos];
-                    let utf8_res: Result<&str, _> = std::str::from_utf8(slice);
-                    let s = match utf8_res {
-                        Ok(s) => s,
-                        Err(_) => return Err(ParseError::InvalidBulkLength),
-                    };
-                    let bulk_length: i64 = match s.parse() {
-                        Ok(v) => v,
-                        Err(_) => return Err(ParseError::InvalidBulkLength),
-                    };
-                    if bulk_length == -1 {
-                        self.buf.drain(..pos + 2);
+                    if length == -1 {
                         self.state = State::Start;
                         return Ok(Some(Frame::Bulk(None)));
                     }
-                    if bulk_length < -1 {
-                        return Err(ParseError::InvalidBulkLength);
+                    if length < -1 {
+                        return Err(ParseError::InvalidLength);
                     }
-                    let bulk_length =
-                        usize::try_from(bulk_length).map_err(|_| ParseError::InvalidBulkLength)?;
-                    self.buf.drain(..pos + 2);
-                    self.state = State::ReadingBulkString(bulk_length);
+                    let length = usize::try_from(length).map_err(|_| ParseError::InvalidLength)?;
+                    self.state = State::ReadingBulkString(length);
                     continue;
                 }
 
-                State::ReadingBulkString(bulk_length) => {
-                    let len = *bulk_length;
+                State::ReadingBulkString(length) => {
+                    let len = *length;
                     if len + 2 > self.buf.len() {
                         return Ok(None);
                     }
@@ -141,36 +143,24 @@ impl Parser {
                 }
 
                 State::ReadingArrayLength => {
-                    let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
-                        Some(pos) => pos,
+                    let length = match self.read_length()? {
+                        Some(l) => l,
                         None => return Ok(None),
                     };
-                    let slice = &self.buf[..pos];
-                    let utf8_res: Result<&str, _> = std::str::from_utf8(slice);
-                    let s = match utf8_res {
-                        Ok(s) => s,
-                        Err(_) => return Err(ParseError::InvalidArrayLength),
-                    };
-                    let array_length: i64 = match s.parse() {
-                        Ok(v) => v,
-                        Err(_) => return Err(ParseError::InvalidArrayLength),
-                    };
-                    if array_length == -1 {
-                        self.buf.drain(..pos + 2);
+                    if length == -1 {
                         self.state = State::Start;
                         return Ok(Some(Frame::Array(None)));
                     }
-                    if array_length < -1 {
-                        return Err(ParseError::InvalidArrayLength);
+                    if length < -1 {
+                        return Err(ParseError::InvalidLength);
                     }
-                    let array_length = usize::try_from(array_length)
-                        .map_err(|_| ParseError::InvalidArrayLength)?;
-                    self.buf.drain(..pos + 2);
-                    self.state = State::ReadingArray(array_length, Vec::new());
+                    let length = usize::try_from(length).map_err(|_| ParseError::InvalidLength)?;
+                    self.state = State::ReadingBulkString(length);
+
                     continue;
                 }
 
-                State::ReadingArray(array_length, array_builder) => {
+                State::ReadingArray(length, array_builder) => {
                     todo!();
                 }
 
@@ -249,8 +239,8 @@ mod tests {
         fn out_of_bounds_length_returns_error() {
             let mut p = Parser::new();
             let buf = b"$-2\r\n";
-            assert_eq!(p.parse(buf), Err(ParseError::InvalidBulkLength));
-            assert_eq!(p.state, State::Error(ParseError::InvalidBulkLength))
+            assert_eq!(p.parse(buf), Err(ParseError::InvalidLength));
+            assert_eq!(p.state, State::Error(ParseError::InvalidLength))
         }
 
         #[test]
