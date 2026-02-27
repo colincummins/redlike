@@ -162,17 +162,17 @@ mod tests {
         fn incomplete_buffer_gets_ok_none() {
             let mut p = Parser::new();
             let buf = b"+";
-            assert_eq!(p.parse(buf), Ok(None));
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
             let mut p = Parser::new();
             let buf = b"+OK";
-            assert_eq!(p.parse(buf), Ok(None));
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
         }
 
         #[test]
         fn parse_empty_simple_string() {
             let mut p = Parser::new();
             let buf = b"+\r\n";
-            assert_eq!(p.parse(buf), Ok(Some(Frame::SimpleString("".to_string()))))
+            assert_eq!(p.parse(buf), Ok(vec![Frame::SimpleString("".to_string())]))
         }
 
         #[test]
@@ -181,17 +181,7 @@ mod tests {
             let buf = b"+OK\r\n";
             assert_eq!(
                 p.parse(buf),
-                Ok(Some(Frame::SimpleString("OK".to_string())))
-            )
-        }
-
-        #[test]
-        fn parser_only_grabs_one_frame() {
-            let mut p = Parser::new();
-            let buf = b"+OK\r\n+OK\r\n";
-            assert_eq!(
-                p.parse(buf),
-                Ok(Some(Frame::SimpleString("OK".to_string())))
+                Ok(vec![Frame::SimpleString("OK".to_string())])
             )
         }
     }
@@ -202,28 +192,28 @@ mod tests {
         fn bulk_string_marker_only_returns_none() {
             let mut p = Parser::new();
             let buf = &b"$"[..];
-            assert_eq!(p.parse(buf), Ok(None));
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
         }
 
         #[test]
         fn incomplete_length_returns_none() {
             let mut p = Parser::new();
             let buf = &b"$5"[..];
-            assert_eq!(p.parse(buf), Ok(None));
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
         }
 
         #[test]
         fn complete_length_but_no_payload_returns_none() {
             let mut p = Parser::new();
             let buf = b"$5\r\n";
-            assert_eq!(p.parse(buf), Ok(None));
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
         }
 
         #[test]
         fn complete_length_but_incomplete_payload_returns_none() {
             let mut p = Parser::new();
             let buf = b"$5\r\nh";
-            assert_eq!(p.parse(buf), Ok(None));
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
         }
 
         #[test]
@@ -238,14 +228,14 @@ mod tests {
         fn minus_one_returns_nil_bulk_string() {
             let mut p = Parser::new();
             let buf = b"$-1\r\n";
-            assert_eq!(p.parse(buf), Ok(Some(Frame::Bulk(None))))
+            assert_eq!(p.parse(buf), Ok(vec![Frame::Bulk(None)]))
         }
 
         #[test]
         fn zero_length_bulk_string() {
             let mut p = Parser::new();
             let buf = b"$0\r\n\r\n";
-            assert_eq!(p.parse(buf), Ok(Some(Frame::Bulk(Some(vec![])))));
+            assert_eq!(p.parse(buf), Ok(vec![Frame::Bulk(Some(vec![]))]));
         }
 
         #[test]
@@ -268,7 +258,8 @@ mod tests {
         fn proper_payload_parsed_leaving_remaining_buffer() {
             let mut p = Parser::new();
             let buf = b"$5\r\nhello\r\nleftovers";
-            assert_eq!(p.parse(buf), Ok(Some(Frame::Bulk(Some(b"hello".to_vec())))));
+            assert_eq!(p.parse(buf), Ok(vec![Frame::Bulk(Some(b"hello".to_vec()))]));
+            assert_eq!(p.buf, b"leftovers")
         }
     }
 }
