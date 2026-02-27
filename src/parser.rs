@@ -47,10 +47,13 @@ impl Parser {
     fn parse(&mut self, input: &[u8]) -> Result<Vec<Frame>, ParseError> {
         self.buf.extend_from_slice(input);
         let mut output = Vec::<Frame>::new();
-        while let Some(f) = self.try_parse_one_frame()? {
-            output.push(f);
+        loop {
+            match self.try_parse_one_frame() {
+                Ok(Some(f)) => output.push(f),
+                Ok(None) => return Ok(output),
+                Err(e) => return Err(self.set_error(e)),
+            }
         }
-        Ok(output)
     }
 
     fn try_parse_one_frame(&mut self) -> Result<Option<Frame>, ParseError> {
@@ -86,8 +89,8 @@ impl Parser {
                         None => return Ok(None),
                     };
                     let bytes: Vec<u8> = self.buf.drain(..pos).collect();
-                    let payload = String::from_utf8(bytes)
-                        .map_err(|_| self.set_error(ParseError::UnreadableUtf))?;
+                    let payload =
+                        String::from_utf8(bytes).map_err(|_| ParseError::UnreadableUtf)?;
                     self.buf.drain(..2);
                     self.state = State::Start;
                     return Ok(Some(Frame::SimpleString(payload)));
@@ -102,11 +105,11 @@ impl Parser {
                     let utf8_res: Result<&str, _> = std::str::from_utf8(slice);
                     let s = match utf8_res {
                         Ok(s) => s,
-                        Err(_) => return Err(self.set_error(ParseError::InvalidBulkLength)),
+                        Err(_) => return Err(ParseError::InvalidBulkLength),
                     };
                     let bulk_length: i64 = match s.parse() {
                         Ok(v) => v,
-                        Err(_) => return Err(self.set_error(ParseError::InvalidBulkLength)),
+                        Err(_) => return Err(ParseError::InvalidBulkLength),
                     };
                     if bulk_length == -1 {
                         self.buf.drain(..pos + 2);
@@ -114,10 +117,10 @@ impl Parser {
                         return Ok(Some(Frame::Bulk(None)));
                     }
                     if bulk_length < -1 {
-                        return Err(self.set_error(ParseError::InvalidBulkLength));
+                        return Err(ParseError::InvalidBulkLength);
                     }
-                    let bulk_length = usize::try_from(bulk_length)
-                        .map_err(|_| self.set_error(ParseError::InvalidBulkLength))?;
+                    let bulk_length =
+                        usize::try_from(bulk_length).map_err(|_| ParseError::InvalidBulkLength)?;
                     self.buf.drain(..pos + 2);
                     self.state = State::ReadingBulkString(bulk_length);
                     continue;
@@ -129,7 +132,7 @@ impl Parser {
                         return Ok(None);
                     }
                     if self.buf[len] != b'\r' || self.buf[len + 1] != b'\n' {
-                        return Err(self.set_error(ParseError::UnreadableBulkString));
+                        return Err(ParseError::UnreadableBulkString);
                     }
                     let payload = self.buf.drain(..len).collect();
                     self.buf.drain(..2);
@@ -146,11 +149,11 @@ impl Parser {
                     let utf8_res: Result<&str, _> = std::str::from_utf8(slice);
                     let s = match utf8_res {
                         Ok(s) => s,
-                        Err(_) => return Err(self.set_error(ParseError::InvalidArrayLength)),
+                        Err(_) => return Err(ParseError::InvalidArrayLength),
                     };
                     let array_length: i64 = match s.parse() {
                         Ok(v) => v,
-                        Err(_) => return Err(self.set_error(ParseError::InvalidArrayLength)),
+                        Err(_) => return Err(ParseError::InvalidArrayLength),
                     };
                     if array_length == -1 {
                         self.buf.drain(..pos + 2);
@@ -158,10 +161,10 @@ impl Parser {
                         return Ok(Some(Frame::Array(None)));
                     }
                     if array_length < -1 {
-                        return Err(self.set_error(ParseError::InvalidArrayLength));
+                        return Err(ParseError::InvalidArrayLength);
                     }
                     let array_length = usize::try_from(array_length)
-                        .map_err(|_| self.set_error(ParseError::InvalidArrayLength))?;
+                        .map_err(|_| ParseError::InvalidArrayLength)?;
                     self.buf.drain(..pos + 2);
                     self.state = State::ReadingArray(array_length, Vec::new());
                     continue;
