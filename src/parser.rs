@@ -1,4 +1,4 @@
-use std::fmt::Error;
+use std::{fmt::Error, ops::RemAssign};
 
 #[derive(Debug, PartialEq, Clone)]
 enum ParseError {
@@ -160,8 +160,24 @@ impl Parser {
                     continue;
                 }
 
-                State::ReadingArray(length, array_builder) => {
-                    todo!();
+                State::ReadingArray(remaining, array_builder) => {
+                    let mut remaining = *remaining;
+                    let mut payload = std::mem::take(array_builder);
+                    if remaining == 0 {
+                        self.state = State::Start;
+                        return Ok(Some(Frame::Array(Some(payload))));
+                    } else {
+                        let frame = self.try_parse_one_frame()?;
+                        match frame {
+                            None => return Ok(None),
+                            Some(f) => {
+                                payload.push(f);
+                                remaining -= 1;
+                                self.state = State::ReadingArray(remaining, payload);
+                                return Ok(None);
+                            }
+                        }
+                    }
                 }
 
                 State::Error(e) => {
