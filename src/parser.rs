@@ -354,7 +354,7 @@ mod tests {
         #[test]
         fn zero_length_array() {
             let mut p = Parser::new();
-            let buf = b"*0\r\n\r\n";
+            let buf = b"*0\r\n";
             assert_eq!(p.parse(buf), Ok(vec![Frame::Array(Some(Vec::new()))]));
         }
 
