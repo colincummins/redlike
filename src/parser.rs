@@ -155,7 +155,7 @@ impl Parser {
                         return Err(ParseError::InvalidLength);
                     }
                     let length = usize::try_from(length).map_err(|_| ParseError::InvalidLength)?;
-                    self.state = State::ReadingBulkString(length);
+                    self.state = State::ReadingArray(length, Vec::new());
 
                     continue;
                 }
@@ -174,6 +174,7 @@ impl Parser {
                                 payload.push(f);
                                 remaining -= 1;
                                 self.state = State::ReadingArray(remaining, payload);
+                                continue;
                             }
                         }
                     }
@@ -316,6 +317,52 @@ mod tests {
                     ]
                 )
             }
+        }
+    }
+
+    mod array_tests {
+        use super::*;
+        #[test]
+        fn array_marker_only_returns_none() {
+            let mut p = Parser::new();
+            let buf = &b"*"[..];
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
+        }
+
+        #[test]
+        fn incomplete_length_returns_none() {
+            let mut p = Parser::new();
+            let buf = &b"*5"[..];
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
+        }
+
+        #[test]
+        fn out_of_bounds_length_returns_error() {
+            let mut p = Parser::new();
+            let buf = b"*-2\r\n";
+            assert_eq!(p.parse(buf), Err(ParseError::InvalidLength));
+            assert_eq!(p.state, State::Error(ParseError::InvalidLength))
+        }
+
+        #[test]
+        fn minus_one_returns_nil_array() {
+            let mut p = Parser::new();
+            let buf = b"*-1\r\n";
+            assert_eq!(p.parse(buf), Ok(vec![Frame::Array(None)]))
+        }
+
+        #[test]
+        fn zero_length_array() {
+            let mut p = Parser::new();
+            let buf = b"*0\r\n\r\n";
+            assert_eq!(p.parse(buf), Ok(vec![Frame::Array(Some(Vec::new()))]));
+        }
+
+        #[test]
+        fn complete_length_but_no_payload_returns_no_frames() {
+            let mut p = Parser::new();
+            let buf = b"*5\r\n";
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
         }
     }
 }
