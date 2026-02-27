@@ -32,7 +32,7 @@ struct Parser {
 }
 
 impl Parser {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Parser {
             state: State::Start,
             buf: Vec::new(),
@@ -44,7 +44,7 @@ impl Parser {
         err
     }
 
-    fn parse(&mut self, input: &[u8]) -> Result<Vec<Frame>, ParseError> {
+    pub fn parse(&mut self, input: &[u8]) -> Result<Vec<Frame>, ParseError> {
         self.buf.extend_from_slice(input);
         let mut output = Vec::<Frame>::new();
         loop {
