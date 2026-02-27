@@ -160,24 +160,26 @@ impl Parser {
                     continue;
                 }
 
-                State::ReadingArray(remaining, array_builder) => {
-                    let mut remaining = *remaining;
-                    let mut payload = std::mem::take(array_builder);
-                    if remaining == 0 {
-                        self.state = State::Start;
-                        return Ok(Some(Frame::Array(Some(payload))));
-                    } else {
-                        let frame = self.try_parse_one_frame()?;
-                        match frame {
+                State::ReadingArray(_, _) => {
+                    let state = std::mem::replace(&mut self.state, State::Start);
+                    if let State::ReadingArray(mut remaining, mut items) = state {
+                        if remaining == 0 {
+                            self.state = State::Start;
+                            let finished = std::mem::take(&mut items);
+                            return Ok(Some(Frame::Array(Some(finished))));
+                        }
+
+                        match self.try_parse_one_frame()? {
                             None => return Ok(None),
                             Some(f) => {
-                                payload.push(f);
+                                items.push(f);
                                 remaining -= 1;
-                                self.state = State::ReadingArray(remaining, payload);
+                                self.state = State::ReadingArray(remaining, items);
                                 continue;
                             }
                         }
                     }
+                    unreachable!()
                 }
 
                 State::Error(e) => {
