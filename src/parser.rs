@@ -174,7 +174,6 @@ impl Parser {
                                 payload.push(f);
                                 remaining -= 1;
                                 self.state = State::ReadingArray(remaining, payload);
-                                return Ok(None);
                             }
                         }
                     }
