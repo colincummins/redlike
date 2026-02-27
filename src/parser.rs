@@ -20,6 +20,8 @@ enum State {
     ReadingSimpleString,
     ReadingBulkLength,
     ReadingBulkString(usize),
+    ReadingArrayLength,
+    ReadingArray(usize, Vec<Frame>),
     Error(ParseError),
 }
 
@@ -50,7 +52,7 @@ impl Parser {
         self.buf.extend_from_slice(input);
 
         loop {
-            match self.state {
+            match &mut self.state {
                 State::Start => match self.buf.first() {
                     Some(b'+') => {
                         self.buf.drain(..1);
@@ -60,6 +62,11 @@ impl Parser {
                     Some(b'$') => {
                         self.buf.drain(..1);
                         self.state = State::ReadingBulkLength;
+                        continue;
+                    }
+                    Some(b'*') => {
+                        self.buf.drain(..1);
+                        self.state = State::ReadingArrayLength;
                         continue;
                     }
                     Some(_) => return Ok(None),
@@ -110,20 +117,29 @@ impl Parser {
                 }
 
                 State::ReadingBulkString(bulk_length) => {
-                    if bulk_length + 2 > self.buf.len() {
+                    let len = *bulk_length;
+                    if len + 2 > self.buf.len() {
                         return Ok(None);
                     }
-                    if self.buf[bulk_length] != b'\r' || self.buf[bulk_length + 1] != b'\n' {
+                    if self.buf[len] != b'\r' || self.buf[len + 1] != b'\n' {
                         return Err(self.set_error(ParseError::UnreadableBulkString));
                     }
-                    let payload = self.buf.drain(..bulk_length).collect();
+                    let payload = self.buf.drain(..len).collect();
                     self.buf.drain(..2);
                     self.state = State::Start;
                     return Ok(Some(Frame::Bulk(Some(payload))));
                 }
 
-                State::Error(ref e) => {
+                State::Error(e) => {
                     return Err(e.clone());
+                }
+
+                State::ReadingArrayLength => {
+                    todo!();
+                }
+
+                State::ReadingArray(array_length, array_builder) => {
+                    todo!();
                 }
             }
         }
