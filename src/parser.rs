@@ -44,12 +44,19 @@ impl Parser {
         err
     }
 
-    fn parse(&mut self, input: &[u8]) -> Result<Option<Frame>, ParseError> {
+    fn parse(&self, input: &[u8]) -> Result<Vec<Frame>, ParseError> {
+        self.buf.extend_from_slice(input);
+        let mut output = Vec::<Frame>::new();
+        while let Some(f) = self.try_parse_one_frame()? {
+            output.push(f);
+        }
+        Ok(output)
+    }
+
+    fn try_parse_one_frame(&mut self) -> Result<Option<Frame>, ParseError> {
         if let State::Error(ref e) = self.state {
             return Err(e.clone());
         }
-
-        self.buf.extend_from_slice(input);
 
         loop {
             match &mut self.state {
