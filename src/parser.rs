@@ -366,5 +366,39 @@ mod tests {
             let buf = b"*5\r\n";
             assert_eq!(p.parse(buf), Ok(Vec::new()));
         }
+
+        #[test]
+        fn properly_parses_array() {
+            let mut p = Parser::new();
+            let buf = b"*3\r\n$5\r\nhello\r\n$3\r\nbye\r\n$4\r\nmore\r\n$leftover";
+            assert_eq!(
+                p.parse(buf),
+                Ok(vec![Frame::Array(Some(vec![
+                    Frame::Bulk(Some(b"hello".to_vec())),
+                    Frame::Bulk(Some(b"bye".to_vec())),
+                    Frame::Bulk(Some(b"more".to_vec()))
+                ]))])
+            )
+        }
+
+        #[test]
+        fn divide_simple_array_at_different_locations() {
+            let buf = b"*3\r\n$5\r\nhello\r\n$3\r\nbye\r\n$4\r\nmore\r\n$8leftover";
+            for (i, _) in buf.iter().enumerate() {
+                let mut result = Vec::<Frame>::new();
+                let mut p = Parser::new();
+                let (left, right) = buf.split_at(i);
+                result.extend(p.parse(left).unwrap());
+                result.extend(p.parse(right).unwrap());
+                assert_eq!(
+                    result,
+                    vec![Frame::Array(Some(vec![
+                        Frame::Bulk(Some(b"hello".to_vec())),
+                        Frame::Bulk(Some(b"bye".to_vec())),
+                        Frame::Bulk(Some(b"more".to_vec()))
+                    ]))]
+                )
+            }
+        }
     }
 }
