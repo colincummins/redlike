@@ -418,5 +418,41 @@ mod tests {
                 )
             }
         }
+
+        #[test]
+        fn properly_parses_nested_array() {
+            let mut p = Parser::new();
+            let buf = b"*1\r\n*1\r\n*2\r\n$1\r\na\r\n*-1\r\n";
+            assert_eq!(
+                p.parse(buf),
+                Ok(vec![Frame::Array(Some(vec![Frame::Array(Some(vec![
+                    Frame::Array(Some(vec![
+                        Frame::Bulk(Some(b"a".to_vec())),
+                        Frame::Array(None)
+                    ]))
+                ]))]))])
+            )
+        }
+
+        #[test]
+        fn divide_nested_array_at_different_locations() {
+            let buf = b"*1\r\n*1\r\n*2\r\n$1\r\na\r\n*-1\r\n";
+            for (i, _) in buf.iter().enumerate() {
+                let mut result = Vec::<Frame>::new();
+                let mut p = Parser::new();
+                let (left, right) = buf.split_at(i);
+                result.extend(p.parse(left).unwrap());
+                result.extend(p.parse(right).unwrap());
+                assert_eq!(
+                    result,
+                    vec![Frame::Array(Some(vec![Frame::Array(Some(vec![
+                        Frame::Array(Some(vec![
+                            Frame::Bulk(Some(b"a".to_vec())),
+                            Frame::Array(None)
+                        ]))
+                    ]))]))]
+                )
+            }
+        }
     }
 }
