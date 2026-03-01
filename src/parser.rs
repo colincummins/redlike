@@ -19,6 +19,7 @@ enum Frame {
 enum State {
     Start,
     ReadingSimpleString,
+    ReadingSimpleError,
     ReadingBulkLength,
     ReadingBulkString(usize),
     ReadingArrayLength,
@@ -116,6 +117,11 @@ impl Parser {
                         self.state = State::ReadingArrayLength;
                         continue;
                     }
+                    Some(b'-') => {
+                        self.buf.drain(..1);
+                        self.state = State::ReadingSimpleError;
+                        continue;
+                    }
                     Some(_) => return Ok(None),
                     None => return Ok(None),
                 },
@@ -131,6 +137,19 @@ impl Parser {
                     self.buf.drain(..2);
                     self.state = State::Start;
                     return Ok(Some(Frame::SimpleString(payload)));
+                }
+
+                State::ReadingSimpleError => {
+                    let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
+                        Some(pos) => pos,
+                        None => return Ok(None),
+                    };
+                    let bytes: Vec<u8> = self.buf.drain(..pos).collect();
+                    let payload =
+                        String::from_utf8(bytes).map_err(|_| ParseError::UnreadableUtf)?;
+                    self.buf.drain(..2);
+                    self.state = State::Start;
+                    return Ok(Some(Frame::SimpleError(payload)));
                 }
 
                 State::ReadingBulkLength => {
@@ -224,6 +243,55 @@ mod tests {
                 p.parse(buf),
                 Ok(vec![Frame::SimpleString("OK".to_string())])
             )
+        }
+    }
+    mod simple_error_tests {
+        use super::*;
+        #[test]
+        fn incomplete_buffer_gets_ok_none() {
+            let mut p = Parser::new();
+            let buf = b"-";
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            let mut p = Parser::new();
+            let buf = b"-OK";
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
+        }
+
+        #[test]
+        fn parse_empty_simple_error() {
+            let mut p = Parser::new();
+            let buf = b"-\r\n";
+            assert_eq!(p.parse(buf), Ok(vec![Frame::SimpleError("".to_string())]))
+        }
+
+        #[test]
+        fn parse_simple_error() {
+            let mut p = Parser::new();
+            let buf = b"-This is a simple error\r\n";
+            assert_eq!(
+                p.parse(buf),
+                Ok(vec![Frame::SimpleError(
+                    "This is a simple error".to_string()
+                )])
+            )
+        }
+
+        #[test]
+        fn handles_simple_error_split_at_any_position() {
+            let mut p = Parser::new();
+            let full_buf = b"-This is a simple error\r\n";
+            for (i, _) in full_buf.iter().enumerate() {
+                let mut builder: Vec<Frame> = Vec::new();
+                let (left, right) = full_buf.split_at(i);
+                let mut result = p.parse(left).unwrap();
+                builder.append(&mut result);
+                let mut result = p.parse(right).unwrap();
+                builder.append(&mut result);
+                assert_eq!(
+                    builder,
+                    vec![Frame::SimpleError("This is a simple error".to_string())]
+                )
+            }
         }
     }
 
