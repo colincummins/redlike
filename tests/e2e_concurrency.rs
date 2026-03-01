@@ -8,7 +8,6 @@ async fn test_all_commands(addr: std::net::SocketAddr) -> tokio::io::Result<()> 
     let mut client = TestClient::new(addr).await?;
 
     for i in 0..10 {
-        println!("Spawning client...");
         client.write("PING\n").await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(i * 10)).await;
         assert_eq!(client.read_line().await?, "PONG\n".to_string());

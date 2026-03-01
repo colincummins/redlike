@@ -53,21 +53,11 @@ impl Parser {
             match self.try_parse_one_frame() {
                 Ok(Some(f)) => {
                     if !self.stack.is_empty() {
-                        println!(
-                            "Stack not empty. Push frame to stack instead of output. {:?}",
-                            f
-                        );
                         self.stack.last_mut().unwrap().push(f);
-                        println!("Resulting stack: {:?}", self.stack);
-                        println!(
-                            "Capacity check last stack element {}",
-                            self.stack.last().unwrap().capacity()
-                        );
                         while self.stack.last().unwrap().capacity()
                             - self.stack.last().unwrap().len()
                             == 0
                         {
-                            println!("Push resulted in filled stack. Change to array...");
                             let new_array_frame: Frame =
                                 Frame::Array(Some(self.stack.pop().unwrap()));
                             if self.stack.is_empty() {
@@ -192,10 +182,6 @@ impl Parser {
                     }
                     let length = usize::try_from(length).map_err(|_| ParseError::InvalidLength)?;
                     self.stack.push(Vec::<Frame>::with_capacity(length));
-                    println!(
-                        "Added new array builder to stack with capacity {}",
-                        self.stack.last().unwrap().capacity(),
-                    );
 
                     self.state = State::Start;
                 }
