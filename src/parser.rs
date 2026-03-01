@@ -22,7 +22,6 @@ enum State {
     ReadingBulkLength,
     ReadingBulkString(usize),
     ReadingArrayLength,
-    ReadingArray(usize, Vec<Frame>),
     Error(ParseError),
 }
 
@@ -30,6 +29,7 @@ enum State {
 struct Parser {
     state: State,
     buf: Vec<u8>,
+    stack: Vec<Vec<Frame>>,
 }
 
 impl Parser {
@@ -37,6 +37,7 @@ impl Parser {
         Parser {
             state: State::Start,
             buf: Vec::new(),
+            stack: Vec::new(),
         }
     }
 
@@ -50,7 +51,38 @@ impl Parser {
         let mut output = Vec::<Frame>::new();
         loop {
             match self.try_parse_one_frame() {
-                Ok(Some(f)) => output.push(f),
+                Ok(Some(f)) => {
+                    if !self.stack.is_empty() {
+                        println!(
+                            "Stack not empty. Push frame to stack instead of output. {:?}",
+                            f
+                        );
+                        self.stack.last_mut().unwrap().push(f);
+                        println!("Resulting stack: {:?}", self.stack);
+                        println!(
+                            "Capacity check last stack element {}",
+                            self.stack.last().unwrap().capacity()
+                        );
+                        while self.stack.last().unwrap().capacity()
+                            - self.stack.last().unwrap().len()
+                            == 0
+                        {
+                            println!("Push resulted in filled stack. Change to array...");
+                            let new_array_frame: Frame =
+                                Frame::Array(Some(self.stack.pop().unwrap()));
+                            if self.stack.is_empty() {
+                                output.push(new_array_frame);
+                                break;
+                            } else {
+                                self.stack.last_mut().unwrap().push(new_array_frame);
+                            }
+                        }
+                    } else {
+                        output.push(f);
+                    }
+
+                    continue;
+                }
                 Ok(None) => return Ok(output),
                 Err(e) => return Err(self.set_error(e)),
             }
@@ -151,35 +183,21 @@ impl Parser {
                         self.state = State::Start;
                         return Ok(Some(Frame::Array(None)));
                     }
+                    if length == 0 {
+                        self.state = State::Start;
+                        return Ok(Some(Frame::Array(Some(Vec::new()))));
+                    }
                     if length < -1 {
                         return Err(ParseError::InvalidLength);
                     }
                     let length = usize::try_from(length).map_err(|_| ParseError::InvalidLength)?;
-                    self.state = State::ReadingArray(length, Vec::new());
+                    self.stack.push(Vec::<Frame>::with_capacity(length));
+                    println!(
+                        "Added new array builder to stack with capacity {}",
+                        self.stack.last().unwrap().capacity(),
+                    );
 
-                    continue;
-                }
-
-                State::ReadingArray(_, _) => {
-                    let state = std::mem::replace(&mut self.state, State::Start);
-                    if let State::ReadingArray(mut remaining, mut items) = state {
-                        if remaining == 0 {
-                            self.state = State::Start;
-                            let finished = std::mem::take(&mut items);
-                            return Ok(Some(Frame::Array(Some(finished))));
-                        }
-
-                        match self.try_parse_one_frame()? {
-                            None => return Ok(None),
-                            Some(f) => {
-                                items.push(f);
-                                remaining -= 1;
-                                self.state = State::ReadingArray(remaining, items);
-                                continue;
-                            }
-                        }
-                    }
-                    unreachable!()
+                    self.state = State::Start;
                 }
 
                 State::Error(e) => {
@@ -370,7 +388,7 @@ mod tests {
         #[test]
         fn properly_parses_array() {
             let mut p = Parser::new();
-            let buf = b"*3\r\n$5\r\nhello\r\n$3\r\nbye\r\n$4\r\nmore\r\n$leftover";
+            let buf = b"*3\r\n$5\r\nhello\r\n$3\r\nbye\r\n$4\r\nmore\r\n$8leftover";
             assert_eq!(
                 p.parse(buf),
                 Ok(vec![Frame::Array(Some(vec![
