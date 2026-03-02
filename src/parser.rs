@@ -295,9 +295,9 @@ mod tests {
 
         #[test]
         fn handles_simple_error_split_at_any_position() {
-            let mut p = Parser::new();
             let full_buf = b"-This is a simple error\r\n";
             for (i, _) in full_buf.iter().enumerate() {
+                let mut p = Parser::new();
                 let mut builder: Vec<Frame> = Vec::new();
                 let (left, right) = full_buf.split_at(i);
                 let mut result = p.parse(left).unwrap();
@@ -390,9 +390,9 @@ mod tests {
 
         #[test]
         fn handles_bulk_string_split_at_any_position() {
-            let mut p = Parser::new();
             let full_buf = b"$5\r\nhello\r\n$7\r\nanother\r\n$4\r\nbulk\r\n";
             for (i, _) in full_buf.iter().enumerate() {
+                let mut p = Parser::new();
                 let mut builder: Vec<Frame> = Vec::new();
                 let (left, right) = full_buf.split_at(i);
                 let mut result = p.parse(left).unwrap();
@@ -522,6 +522,73 @@ mod tests {
                             Frame::Array(None)
                         ]))
                     ]))]))]
+                )
+            }
+        }
+    }
+    mod integer_tests {
+        use super::*;
+        #[test]
+        fn integer_marker_only_returns_none() {
+            let mut p = Parser::new();
+            let buf = &b":"[..];
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
+        }
+
+        #[test]
+        fn unterminated_integer_returns_none() {
+            let mut p = Parser::new();
+            let buf = &b":12345"[..];
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
+        }
+
+        #[test]
+        fn proper_integer_parsed_leaving_buffer() {
+            let mut p = Parser::new();
+            let buf = b":12345\r\nleftovers";
+            assert_eq!(p.parse(buf), Ok(vec![Frame::Integer(12345)]));
+            assert_eq!(p.buf, b"leftovers")
+        }
+
+        #[test]
+        fn properly_handles_leading_signs() {
+            let mut p = Parser::new();
+            let buf = b":+12345\r\n:-567890\r\n";
+            let result = p.parse(buf);
+            assert_eq!(p.state, State::Start);
+            assert_eq!(
+                result,
+                Ok(vec![Frame::Integer(12345), Frame::Integer(-567890)])
+            );
+        }
+
+        #[test]
+        fn handles_split_before_sign() {
+            let mut p = Parser::new();
+            let left = b":";
+            let right = b"-123\r\n";
+            assert_eq!(p.parse(left), Ok(vec![]));
+            assert_eq!(p.parse(right), Ok(vec![Frame::Integer(-123)]));
+        }
+
+        #[test]
+        fn handles_multiple_integers_split_at_any_position() {
+            let full_buf = b":-123\r\n:456\r\n:7890\r\n:3333";
+            for (i, _) in full_buf.iter().enumerate() {
+                let mut p = Parser::new();
+                let mut builder: Vec<Frame> = Vec::new();
+                let (left, right) = full_buf.split_at(i);
+                let mut result = p.parse(left).unwrap();
+                builder.append(&mut result);
+                let mut result = p.parse(right).unwrap();
+                builder.append(&mut result);
+                assert_eq!(
+                    builder,
+                    vec![
+                        Frame::Integer(-123),
+                        Frame::Integer(456),
+                        Frame::Integer(7890),
+                    ]
                 )
             }
         }
