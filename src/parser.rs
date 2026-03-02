@@ -12,6 +12,7 @@ enum Frame {
     SimpleString(String),
     SimpleError(String),
     Bulk(Option<Vec<u8>>),
+    Integer(i64),
     Array(Option<Vec<Frame>>),
 }
 
@@ -22,6 +23,7 @@ enum State {
     ReadingSimpleError,
     ReadingBulkLength,
     ReadingBulkString(usize),
+    ReadingInteger,
     ReadingArrayLength,
     Error(ParseError),
 }
@@ -122,6 +124,11 @@ impl Parser {
                         self.state = State::ReadingSimpleError;
                         continue;
                     }
+                    Some(b':') => {
+                        self.buf.drain(..1);
+                        self.state = State::ReadingInteger;
+                        continue;
+                    }
                     Some(_) => return Ok(None),
                     None => return Ok(None),
                 },
@@ -181,6 +188,16 @@ impl Parser {
                     self.buf.drain(..2);
                     self.state = State::Start;
                     return Ok(Some(Frame::Bulk(Some(payload))));
+                }
+
+                State::ReadingInteger => {
+                    match self.read_length()? {
+                        Some(l) => {
+                            self.state = State::Start;
+                            return Ok(Some(Frame::Integer(l)));
+                        }
+                        None => return Ok(None),
+                    };
                 }
 
                 State::ReadingArrayLength => {
