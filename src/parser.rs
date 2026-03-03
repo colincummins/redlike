@@ -24,6 +24,7 @@ enum State {
     ReadingBulkLength,
     ReadingBulkString(usize),
     ReadingInteger,
+    ReadingInline,
     ReadingArrayLength,
     Error(ParseError),
 }
@@ -129,7 +130,10 @@ impl Parser {
                         self.state = State::ReadingInteger;
                         continue;
                     }
-                    Some(_) => return Ok(None),
+                    Some(_) => {
+                        self.state = State::ReadingInline;
+                        continue;
+                    }
                     None => return Ok(None),
                 },
 
@@ -144,6 +148,23 @@ impl Parser {
                     self.buf.drain(..2);
                     self.state = State::Start;
                     return Ok(Some(Frame::SimpleString(payload)));
+                }
+
+                State::ReadingInline => {
+                    let mut array_inner = Vec::<Frame>::new();
+                    let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
+                        Some(pos) => pos,
+                        None => return Ok(None),
+                    };
+                    for p in String::from_utf8(self.buf.drain(..pos).collect())
+                        .map_err(|_| ParseError::UnreadableUtf)?
+                        .split(" ")
+                    {
+                        array_inner.push(Frame::Bulk(Some(p.as_bytes().to_vec())));
+                    }
+                    self.buf.drain(..2);
+                    self.state = State::Start;
+                    return Ok(Some(Frame::Array(Some(array_inner))));
                 }
 
                 State::ReadingSimpleError => {
@@ -588,6 +609,40 @@ mod tests {
                         Frame::Integer(-123),
                         Frame::Integer(456),
                         Frame::Integer(7890),
+                    ]
+                )
+            }
+        }
+    }
+    mod inline_tests {
+        use super::*;
+        #[test]
+        fn unterminated_inline_returns_none() {
+            let mut p = Parser::new();
+            let buf = &b"h"[..];
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
+        }
+
+        #[test]
+        fn divide_inline_array_at_different_locations() {
+            let buf = b"hello there\r\nanother line\r\nleftover";
+            for (i, _) in buf.iter().enumerate() {
+                let mut result = Vec::<Frame>::new();
+                let mut p = Parser::new();
+                let (left, right) = buf.split_at(i);
+                result.extend(p.parse(left).unwrap());
+                result.extend(p.parse(right).unwrap());
+                assert_eq!(
+                    result,
+                    vec![
+                        Frame::Array(Some(vec![
+                            Frame::Bulk(Some(b"hello".to_vec())),
+                            Frame::Bulk(Some(b"there".to_vec())),
+                        ])),
+                        Frame::Array(Some(vec![
+                            Frame::Bulk(Some(b"another".to_vec())),
+                            Frame::Bulk(Some(b"line".to_vec())),
+                        ]))
                     ]
                 )
             }
