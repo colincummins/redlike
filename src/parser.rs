@@ -1,19 +1,10 @@
-use std::{fmt::Error, ops::RemAssign};
+use crate::frame::Frame;
 
 #[derive(Debug, PartialEq, Clone)]
 enum ParseError {
     UnreadableUtf,
     InvalidLength,
     UnreadableBulkString,
-}
-
-#[derive(Debug, PartialEq)]
-enum Frame {
-    SimpleString(String),
-    SimpleError(String),
-    Bulk(Option<Vec<u8>>),
-    Integer(i64),
-    Array(Option<Vec<Frame>>),
 }
 
 #[derive(Debug, PartialEq)]
