@@ -29,3 +29,7 @@ proptest! {
     }
 
 }
+
+fn main() {
+    frame_bytes_frame();
+}
