@@ -1,7 +1,7 @@
 use crate::frame::Frame;
 
 #[derive(Debug, PartialEq, Clone)]
-enum ParseError {
+pub enum ParseError {
     UnreadableUtf,
     InvalidLength,
     UnreadableBulkString,
@@ -21,7 +21,7 @@ enum State {
 }
 
 #[derive(Debug, PartialEq)]
-struct Parser {
+pub struct Parser {
     state: State,
     buf: Vec<u8>,
     stack: Vec<Vec<Frame>>,
