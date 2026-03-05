@@ -24,9 +24,8 @@ proptest! {
     #[test]
     fn frame_bytes_frame(f in arb_frame()) {
         let mut p = Parser::new();
-        let f_return_vec = p.parse(f.to_bytes().as_slice()).unwrap();
-        assert_eq!(f_return_vec.len(), 1);
-        assert_eq!(*f_return_vec.first().unwrap(), f);
+        prop_assert_eq!(p.parse(f.to_bytes().as_slice()).unwrap(),&[f]);
+        prop_assert!(p.is_empty())
     }
 
 }

@@ -74,6 +74,10 @@ impl Parser {
         }
     }
 
+    pub fn is_empty(self) -> bool {
+        self.buf.is_empty()
+    }
+
     fn read_length(&mut self) -> Result<Option<i64>, ParseError> {
         let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
             Some(pos) => pos,
