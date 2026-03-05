@@ -1,19 +1,10 @@
-use std::{fmt::Error, ops::RemAssign};
+use crate::frame::Frame;
 
 #[derive(Debug, PartialEq, Clone)]
-enum ParseError {
+pub enum ParseError {
     UnreadableUtf,
     InvalidLength,
     UnreadableBulkString,
-}
-
-#[derive(Debug, PartialEq)]
-enum Frame {
-    SimpleString(String),
-    SimpleError(String),
-    Bulk(Option<Vec<u8>>),
-    Integer(i64),
-    Array(Option<Vec<Frame>>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -30,7 +21,7 @@ enum State {
 }
 
 #[derive(Debug, PartialEq)]
-struct Parser {
+pub struct Parser {
     state: State,
     buf: Vec<u8>,
     stack: Vec<Vec<Frame>>,
@@ -81,6 +72,10 @@ impl Parser {
                 Err(e) => return Err(self.set_error(e)),
             }
         }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.buf.is_empty()
     }
 
     fn read_length(&mut self) -> Result<Option<i64>, ParseError> {

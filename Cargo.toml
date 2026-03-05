@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+
+
+[dev-dependencies]
+proptest = "1.0.0"
