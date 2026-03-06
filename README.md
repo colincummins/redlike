@@ -1,5 +1,5 @@
 # redlike
-Redlike is a concurrent, in-memory key–value store that communicates with clients over TCP using a simple, line-based text protocol.
+Redlike is a concurrent, in-memory key-value store that communicates with clients over TCP using a simple, line-based text protocol.
 
 # API Specification
 
@@ -16,20 +16,21 @@ Redlike is a concurrent, in-memory key–value store that communicates with clie
 
 * Commands are **ASCII text**
 * Commands are **line-based**
-* Each command ends with `\r\n`
-* Responses are also line-based and terminated with `\r\n`
-* Commands and keys are **case-sensitive**
-* Values are treated as opaque strings
+* Requests are terminated by a newline (`\n`)
+* Responses are line-based and terminated with `\n`
+* Commands are **case-insensitive**
+* Keys are **case-sensitive**
+* Values are parsed as a single token (no spaces)
 
 ---
 
 ## Request Format
 
 ```
-COMMAND [ARG1] [ARG2] ...\r\n
+COMMAND [ARG1] [ARG2] ...\n
 ```
 
-* Tokens are separated by **single spaces**
+* Tokens are separated by whitespace
 * Leading/trailing whitespace is ignored
 * Empty lines are ignored
 
@@ -45,13 +46,13 @@ Health check command.
 **Request:**
 
 ```
-PING\r\n
+PING\n
 ```
 
 **Response:**
 
 ```
-PONG\r\n
+PONG\n
 ```
 
 ---
@@ -64,7 +65,7 @@ Retrieve the value associated with `key`.
 **Request:**
 
 ```
-GET mykey\r\n
+GET mykey\n
 ```
 
 **Responses:**
@@ -72,12 +73,12 @@ GET mykey\r\n
 * If key exists:
 
   ```
-  VALUE myvalue\r\n
+  myvalue\n
   ```
 * If key does not exist:
 
   ```
-  NIL\r\n
+  \n
   ```
 
 ---
@@ -90,13 +91,13 @@ Set `key` to `value`, overwriting any existing value.
 **Request:**
 
 ```
-SET mykey myvalue\r\n
+SET mykey myvalue\n
 ```
 
 **Response:**
 
 ```
-OK\r\n
+OK\n
 ```
 
 ---
@@ -109,7 +110,7 @@ Delete a key if it exists.
 **Request:**
 
 ```
-DEL mykey\r\n
+DEL mykey\n
 ```
 
 **Responses:**
@@ -117,12 +118,12 @@ DEL mykey\r\n
 * If key was deleted:
 
   ```
-  OK\r\n
+  1\n
   ```
 * If key did not exist:
 
   ```
-  NIL\r\n
+  0\n
   ```
 
 ---
@@ -135,16 +136,13 @@ Close the client connection.
 **Request:**
 
 ```
-QUIT\r\n
+QUIT\n
 ```
 
 **Response:**
+No response body is sent.
 
-```
-BYE\r\n
-```
-
-The server closes the connection after sending the response.
+The server closes the connection immediately.
 
 ---
 
@@ -155,7 +153,7 @@ Errors are returned as explicit protocol responses.
 ### Error Response Format
 
 ```
-ERROR <message>\r\n
+ERR <message>\n
 ```
 
 ### Examples
@@ -163,19 +161,13 @@ ERROR <message>\r\n
 * Unknown command:
 
   ```
-  ERROR unknown command\r\n
+  ERR Unknown Command\n
   ```
 
 * Invalid argument count:
 
   ```
-  ERROR invalid arguments\r\n
-  ```
-
-* Malformed request:
-
-  ```
-  ERROR protocol error\r\n
+  ERR Wrong number of arguments\n
   ```
 
 Errors do **not** close the connection unless otherwise specified.
@@ -192,13 +184,8 @@ Errors do **not** close the connection unless otherwise specified.
 
 ## Limits
 
-* Maximum request line length: **8 KB**
 * Keys and values must fit within a single request line
-* Requests exceeding limits return:
-
-  ```
-  ERROR request too large\r\n
-  ```
+* Value tokens cannot contain spaces
 
 ---
 
@@ -212,14 +199,14 @@ Errors do **not** close the connection unless otherwise specified.
 < OK
 
 > GET language
-< VALUE rust
+< rust
 
 > DEL language
-< OK
+< 1
 
 > GET language
-< NIL
+<
 
 > QUIT
-< BYE
+(connection closed)
 ```
