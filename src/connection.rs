@@ -10,16 +10,6 @@ pub struct Connection<R, W> {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-enum Command {
-    PING,
-    GET { key: String },
-    SET { key: String, value: String },
-    DEL { key: String },
-    QUIT,
-    NOOP,
-}
-
-#[derive(PartialEq, Eq, Debug)]
 enum Response {
     Simple(String),
     Error(String),
