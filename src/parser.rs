@@ -154,18 +154,21 @@ impl Parser {
 
                 State::ReadingInline => {
                     let mut array_inner = Vec::<Frame>::new();
-                    let pos = match self.buf.windows(2).position(|w| w == b"\r\n") {
+                    let pos = match memchr(b'\n', &self.buf) {
                         Some(pos) => pos,
                         None => return Ok(None),
                     };
                     for p in String::from_utf8(self.buf.drain(..pos).collect())
                         .map_err(|_| ParseError::UnreadableUtf)?
-                        .split(" ")
+                        .split_whitespace()
                     {
                         array_inner.push(Frame::Bulk(Some(p.as_bytes().to_vec())));
                     }
-                    self.buf.drain(..2);
+                    self.buf.drain(..1);
                     self.state = State::Start;
+                    if array_inner.is_empty() {
+                        continue;
+                    };
                     return Ok(Some(Frame::Array(Some(array_inner))));
                 }
 
@@ -626,8 +629,27 @@ mod tests {
         }
 
         #[test]
+        fn empty_inlines_return_none() {
+            let mut p = Parser::new();
+            let buf = &b"\r\n"[..];
+            assert_eq!(p.parse(buf), Ok(Vec::new()));
+        }
+
+        #[test]
+        fn inline_carriage_return_is_optional() {
+            let mut p = Parser::new();
+            let buf = &b"hello\n"[..];
+            assert_eq!(
+                p.parse(buf),
+                Ok(vec![Frame::Array(Some(vec![Frame::Bulk(Some(
+                    b"hello".to_vec()
+                )),])),])
+            );
+        }
+
+        #[test]
         fn divide_inline_array_at_different_locations() {
-            let buf = b"hello there\r\nanother line\r\nleftover";
+            let buf = b"hello there\r\n\r\n\n\nanother line\r\nleftover";
             for (i, _) in buf.iter().enumerate() {
                 let mut result = Vec::<Frame>::new();
                 let mut p = Parser::new();
