@@ -1,4 +1,5 @@
 use crate::frame::Frame;
+use memchr::memchr;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ParseError {
