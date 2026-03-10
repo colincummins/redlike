@@ -133,6 +133,7 @@ where
                     expected: _,
                 }) => ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into())),
                 Err(Error::Io(_e)) => break,
+                Err(Error::InvalidCommandFrame) => break,
             };
             match outcome {
                 ProcessOutcome::Noop => continue,
