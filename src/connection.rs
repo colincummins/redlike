@@ -1,4 +1,5 @@
 #![allow(clippy::upper_case_acronyms)]
+use crate::command::Command;
 use crate::error::Error;
 use crate::store::Store;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
