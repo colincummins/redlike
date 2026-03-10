@@ -28,6 +28,12 @@ pub struct Parser {
     stack: Vec<Vec<Frame>>,
 }
 
+impl Default for Parser {
+    fn default() -> Self {
+        Parser::new()
+    }
+}
+
 impl Parser {
     pub fn new() -> Self {
         Parser {
