@@ -18,6 +18,7 @@ impl TryFrom<Frame> for Command {
             Frame::Array(Some(inner)) if !inner.is_empty() => inner,
             _ => return Err(Error::InvalidCommandFrame),
         };
+
         let args: Vec<Vec<u8>> = args
             .into_iter()
             .map(|a| match a {
@@ -25,6 +26,8 @@ impl TryFrom<Frame> for Command {
                 _ => Err(Error::InvalidCommandFrame),
             })
             .collect::<Result<_, _>>()?;
+
+        match args {}
 
         Err(Error::UnknownCommand)
     }
