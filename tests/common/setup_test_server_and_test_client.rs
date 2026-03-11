@@ -1,5 +1,5 @@
-use super::super::server_from_listener;
 use super::test_client::TestClient;
+use redlike::server::server_from_listener;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
