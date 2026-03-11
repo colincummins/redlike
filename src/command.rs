@@ -4,9 +4,9 @@ use crate::frame::Frame;
 #[derive(PartialEq, Eq, Debug)]
 pub enum Command {
     PING,
-    GET { key: String },
-    SET { key: String, value: String },
-    DEL { key: String },
+    GET { key: Vec<u8> },
+    SET { key: Vec<u8>, value: Vec<u8> },
+    DEL { key: Vec<u8> },
     QUIT,
     NOOP,
 }
@@ -26,8 +26,6 @@ impl TryFrom<Frame> for Command {
                 _ => Err(Error::InvalidCommandFrame),
             })
             .collect::<Result<_, _>>()?;
-
-        match args {}
 
         Err(Error::UnknownCommand)
     }

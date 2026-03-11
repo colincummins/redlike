@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct Store {
-    inner: Arc<RwLock<HashMap<String, String>>>,
+    inner: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
 impl Store {
@@ -13,17 +13,17 @@ impl Store {
         }
     }
 
-    pub async fn get(&self, key: &str) -> Option<String> {
+    pub async fn get(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
         let map = self.inner.read().await;
         map.get(key).cloned()
     }
 
-    pub async fn set(&self, key: String, value: String) -> Option<String> {
+    pub async fn set(&self, key: Vec<u8>, value: Vec<u8>) -> Option<Vec<u8>> {
         let mut map = self.inner.write().await;
         map.insert(key, value)
     }
 
-    pub async fn del(&self, key: &str) -> Option<String> {
+    pub async fn del(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
         let mut map = self.inner.write().await;
         map.remove(key)
     }
@@ -51,29 +51,32 @@ mod tests {
     async fn set_then_get() {
         let store = Store::new();
         store
-            .set("newkey".to_string(), "newvalue".to_string())
+            .set("newkey".as_bytes().to_vec(), "newvalue".as_bytes().to_vec())
             .await;
-        assert_eq!(Some("newvalue".to_string()), store.get("newkey").await)
+        assert_eq!(
+            Some("newvalue".as_bytes().to_vec()),
+            store.get(&"newkey".as_bytes().to_vec()).await
+        )
     }
 
     #[tokio::test]
     async fn get_nonexistent_key() {
         let store = Store::new();
-        assert_eq!(None, store.get("newkey").await)
+        assert_eq!(None, store.get(&"newkey".as_bytes().to_vec()).await)
     }
 
     #[tokio::test]
     async fn delete_existing_key() {
         let store = Store::new();
         store
-            .set("newkey".to_string(), "newvalue".to_string())
+            .set("newkey".as_bytes().to_vec(), "newvalue".as_bytes().to_vec())
             .await;
-        assert!(store.del("newkey").await.is_some())
+        assert!(store.del(&"newkey".as_bytes().to_vec()).await.is_some())
     }
 
     #[tokio::test]
     async fn delete_nonexistent_key() {
         let store = Store::new();
-        assert!(store.del("newkey").await.is_none())
+        assert!(store.del(&"newkey".as_bytes().to_vec()).await.is_none())
     }
 }

@@ -55,7 +55,7 @@ where
                 expected: 0,
             }),
             ("GET", [key]) => Ok(Some(Command::GET {
-                key: key.to_string(),
+                key: key.as_bytes().to_vec(),
             })),
             ("GET", rest) => Err(Error::WrongArity {
                 command: "GET".into(),
@@ -63,8 +63,8 @@ where
                 expected: 1,
             }),
             ("SET", [key, value]) => Ok(Some(Command::SET {
-                key: key.to_string(),
-                value: value.to_string(),
+                key: key.as_bytes().to_vec(),
+                value: value.as_bytes().to_vec(),
             })),
             ("SET", rest @ [..]) => Err(Error::WrongArity {
                 command: "SET".into(),
@@ -72,7 +72,7 @@ where
                 expected: 2,
             }),
             ("DEL", [key]) => Ok(Some(Command::DEL {
-                key: key.to_string(),
+                key: key.as_bytes().to_vec(),
             })),
             ("DEL", rest) => Err(Error::WrongArity {
                 command: "DEL".into(),
@@ -99,7 +99,12 @@ where
                 ProcessOutcome::Respond(Response::Simple("OK".into()))
             }
             Command::GET { key } => ProcessOutcome::Respond(Response::Simple(
-                self.store.get(&key).await.unwrap_or_default(),
+                self.store
+                    .get(&key)
+                    .await
+                    .unwrap_or_default()
+                    .try_into()
+                    .unwrap_or_default(),
             )),
             Command::DEL { key } => {
                 let deleted = self.store.del(&key).await.map(|_| "1").unwrap_or("0");
@@ -205,7 +210,7 @@ mod tests {
         assert_eq!(
             cmd,
             Some(Command::GET {
-                key: "mykey".to_string()
+                key: "mykey".as_bytes().to_vec()
             })
         );
     }
@@ -233,8 +238,8 @@ mod tests {
         assert_eq!(
             cmd,
             Some(Command::SET {
-                key: "mykey".to_string(),
-                value: "myvalue".to_string()
+                key: "mykey".as_bytes().to_vec(),
+                value: "myvalue".as_bytes().to_vec()
             })
         );
     }
@@ -267,7 +272,7 @@ mod tests {
         assert_eq!(
             cmd,
             Some(Command::DEL {
-                key: "mykey".to_string()
+                key: "mykey".as_bytes().to_vec()
             })
         );
     }
@@ -434,7 +439,7 @@ mod tests {
             .unwrap();
         let mut buf = String::new();
         client_reader.read_line(&mut buf).await.unwrap();
-        assert_eq!(buf, "ERR Test\n".to_string());
+        assert_eq!(buf, "ERR Test\n".to_string())
     }
 
     struct TestCase<'a> {
