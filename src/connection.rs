@@ -1,10 +1,11 @@
 #![allow(clippy::upper_case_acronyms)]
 use crate::command::Command;
 use crate::error::Error;
+use crate::frame::Frame;
 use crate::parser::Parser;
 use crate::store::Store;
 use tokio::io::{
-    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
+    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
 };
 
 pub struct Connection<R, W> {
@@ -14,16 +15,10 @@ pub struct Connection<R, W> {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-enum Response {
-    Simple(String),
-    Error(String),
-}
-
-#[derive(PartialEq, Eq, Debug)]
 enum ProcessOutcome {
     Quit,
     Noop,
-    Respond(Response),
+    Respond(Frame),
 }
 
 impl<R, W> Connection<R, W>
@@ -38,90 +33,30 @@ where
             store,
         }
     }
-    async fn read_command(&mut self) -> Result<Option<Command>, Error> {
-        let mut line = String::new();
-
-        if self.reader.read_line(&mut line).await? == 0 {
-            return Ok(None);
-        };
-
-        let mut args = line.split_whitespace();
-        let Some(c) = args.next() else {
-            return Ok(Some(Command::NOOP));
-        };
-        let args: Vec<&str> = args.collect();
-        match (c.to_ascii_uppercase().as_str(), args.as_slice()) {
-            ("PING", []) => Ok(Some(Command::PING)),
-            ("PING", rest) => Err(Error::WrongArity {
-                command: "PING".into(),
-                given: rest.len(),
-                expected: 0,
-            }),
-            ("GET", [key]) => Ok(Some(Command::GET {
-                key: key.as_bytes().to_vec(),
-            })),
-            ("GET", rest) => Err(Error::WrongArity {
-                command: "GET".into(),
-                given: rest.len(),
-                expected: 1,
-            }),
-            ("SET", [key, value]) => Ok(Some(Command::SET {
-                key: key.as_bytes().to_vec(),
-                value: value.as_bytes().to_vec(),
-            })),
-            ("SET", rest @ [..]) => Err(Error::WrongArity {
-                command: "SET".into(),
-                given: rest.len(),
-                expected: 2,
-            }),
-            ("DEL", [key]) => Ok(Some(Command::DEL {
-                key: key.as_bytes().to_vec(),
-            })),
-            ("DEL", rest) => Err(Error::WrongArity {
-                command: "DEL".into(),
-                given: rest.len(),
-                expected: 1,
-            }),
-            ("QUIT", []) => Ok(Some(Command::QUIT)),
-            ("QUIT", rest) => Err(Error::WrongArity {
-                command: "QUIT".into(),
-                given: rest.len(),
-                expected: 0,
-            }),
-            (_, _) => Err(Error::UnknownCommand),
-        }
-    }
 
     async fn process_command(&mut self, command: Command) -> ProcessOutcome {
         match command {
             Command::NOOP => ProcessOutcome::Noop,
             Command::QUIT => ProcessOutcome::Quit,
-            Command::PING => ProcessOutcome::Respond(Response::Simple("PONG".into())),
+            Command::PING => ProcessOutcome::Respond(Frame::SimpleString("PONG".into())),
             Command::SET { key, value } => {
                 self.store.set(key, value).await;
-                ProcessOutcome::Respond(Response::Simple("OK".into()))
+                ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
             }
-            Command::GET { key } => ProcessOutcome::Respond(Response::Simple(
-                self.store
-                    .get(&key)
-                    .await
-                    .unwrap_or_default()
-                    .try_into()
-                    .unwrap_or_default(),
-            )),
+            Command::GET { key } => {
+                ProcessOutcome::Respond(Frame::Bulk(self.store.get(&key).await))
+            }
             Command::DEL { key } => {
-                let deleted = self.store.del(&key).await.map(|_| "1").unwrap_or("0");
-                ProcessOutcome::Respond(Response::Simple(deleted.into()))
+                let deleted = self.store.del(&key).await.map(|_| 1).unwrap_or(0);
+                ProcessOutcome::Respond(Frame::Integer(deleted.into()))
             }
         }
     }
 
-    async fn send_response(&mut self, response: Response) -> Result<(), Error> {
-        let message_text = match response {
-            Response::Error(inner) => format!("ERR {}\n", inner),
-            Response::Simple(inner) => format!("{}\n", inner),
-        };
-        self.writer.write_all(message_text.as_bytes()).await?;
+    async fn send_response(&mut self, response: Frame) -> Result<(), Error> {
+        self.writer
+            .write_all(response.to_bytes().as_slice())
+            .await?;
         self.writer.flush().await?;
         Ok(())
     }
@@ -142,15 +77,15 @@ where
                 let outcome: ProcessOutcome = match Command::try_from(f) {
                     Ok(cmd) => self.process_command(cmd).await,
                     Err(Error::UnknownCommand) => {
-                        ProcessOutcome::Respond(Response::Error("Unknown Command".into()))
+                        ProcessOutcome::Respond(Frame::SimpleError("Unknown Command".into()))
                     }
                     Err(Error::WrongArity {
                         command: _,
                         given: _,
                         expected: _,
-                    }) => {
-                        ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into()))
-                    }
+                    }) => ProcessOutcome::Respond(Frame::SimpleError(
+                        "Wrong number of arguments".into(),
+                    )),
                     Err(Error::Io(_e)) => break,
                     Err(Error::InvalidCommandFrame) => break,
                 };
@@ -168,170 +103,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::{AsyncWriteExt, DuplexStream, Sink, duplex, sink, split};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, Sink, sink, split};
 
     use super::*;
-
-    fn setup_connection() -> (Connection<tokio::io::DuplexStream, Sink>, DuplexStream) {
-        let (client, server) = duplex(64);
-        let store: Store = Store::new();
-        let connection: Connection<tokio::io::DuplexStream, _> =
-            Connection::new(server, sink(), store);
-        (connection, client)
-    }
 
     fn setup_dummy_connection() -> Connection<tokio::io::Empty, Sink> {
         let store: Store = Store::new();
         Connection::new(tokio::io::empty(), sink(), store)
-    }
-
-    #[tokio::test]
-    async fn eol_returns_none() {
-        let mut connection = setup_dummy_connection();
-        let cmd = connection.read_command().await.unwrap();
-        assert_eq!(cmd, None);
-    }
-
-    #[tokio::test]
-    async fn blank_line_returns_noop() {
-        let (mut connection, mut client) = setup_connection();
-        client.write_all(b"\n").await.unwrap();
-        let cmd = connection.read_command().await.unwrap();
-        assert_eq!(cmd, Some(Command::NOOP));
-    }
-
-    #[tokio::test]
-    async fn successful_read_ping() {
-        let (mut connection, mut client) = setup_connection();
-        client.write_all(b"PING\n").await.unwrap();
-        let cmd = connection.read_command().await.unwrap();
-        assert_eq!(cmd, Some(Command::PING));
-    }
-
-    #[tokio::test]
-    async fn reject_bad_arity_ping() {
-        let (mut connection, mut client) = setup_connection();
-        let _ = client.write_all(b"PING extra words\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "PING")
-        );
-    }
-
-    #[tokio::test]
-    async fn successful_read_get() {
-        let (mut connection, mut client) = setup_connection();
-        client.write_all(b"get mykey\n").await.unwrap();
-        let cmd = connection.read_command().await.unwrap();
-        assert_eq!(
-            cmd,
-            Some(Command::GET {
-                key: "mykey".as_bytes().to_vec()
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn reject_bad_arity_get() {
-        let (mut connection, mut client) = setup_connection();
-        let _ = client.write_all(b"GET\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 0, expected: 1 } if command == "GET")
-        );
-        let _ = client.write_all(b"GET too many\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 2, expected: 1 } if command == "GET")
-        );
-    }
-
-    #[tokio::test]
-    async fn successful_read_set() {
-        let (mut connection, mut client) = setup_connection();
-        client.write_all(b"set mykey myvalue\n").await.unwrap();
-        let cmd = connection.read_command().await.unwrap();
-        assert_eq!(
-            cmd,
-            Some(Command::SET {
-                key: "mykey".as_bytes().to_vec(),
-                value: "myvalue".as_bytes().to_vec()
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn reject_bad_arity_set() {
-        let (mut connection, mut client) = setup_connection();
-        let _ = client.write_all(b"set\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 0, expected: 2 } if command == "SET")
-        );
-        let _ = client.write_all(b"set mykey\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 1, expected: 2 } if command == "SET")
-        );
-        let _ = client.write_all(b"set mykey myvalue extra\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 3, expected: 2 } if command == "SET")
-        );
-    }
-
-    #[tokio::test]
-    async fn successful_read_del() {
-        let (mut connection, mut client) = setup_connection();
-        client.write_all(b"del mykey\n").await.unwrap();
-        let cmd = connection.read_command().await.unwrap();
-        assert_eq!(
-            cmd,
-            Some(Command::DEL {
-                key: "mykey".as_bytes().to_vec()
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn reject_bad_arity_del() {
-        let (mut connection, mut client) = setup_connection();
-        let _ = client.write_all(b"del\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 0, expected: 1 } if command == "DEL")
-        );
-        let _ = client.write_all(b"del too many\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 2, expected: 1 } if command == "DEL")
-        );
-    }
-
-    #[tokio::test]
-    async fn successful_read_quit() {
-        let (mut connection, mut client) = setup_connection();
-        client.write_all(b"quit\n").await.unwrap();
-        let cmd = connection.read_command().await.unwrap();
-        assert_eq!(cmd, Some(Command::QUIT));
-    }
-
-    #[tokio::test]
-    async fn reject_bad_arity_quit() {
-        let (mut connection, mut client) = setup_connection();
-        let _ = client.write_all(b"quit extra words\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(
-            matches!(result, Error::WrongArity { command, given: 2, expected: 0 } if command == "QUIT")
-        );
-    }
-
-    #[tokio::test]
-    async fn reject_unknown_commands() {
-        let (mut connection, mut client) = setup_connection();
-        let _ = client.write_all(b"FOO\n").await;
-        let result = connection.read_command().await.unwrap_err();
-        assert!(matches!(result, Error::UnknownCommand));
     }
 
     #[tokio::test]
@@ -340,7 +118,7 @@ mod tests {
         let response = conn.process_command(Command::PING).await;
         assert_eq!(
             response,
-            ProcessOutcome::Respond(Response::Simple("PONG".to_string()))
+            ProcessOutcome::Respond(Frame::SimpleString("PONG".to_string()))
         )
     }
 
@@ -362,7 +140,7 @@ mod tests {
             .await;
         assert_eq!(
             response,
-            ProcessOutcome::Respond(Response::Simple("OK".into()))
+            ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
         )
     }
 
@@ -377,7 +155,7 @@ mod tests {
             .await;
         assert_eq!(
             response,
-            ProcessOutcome::Respond(Response::Simple("OK".into()))
+            ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
         );
         let response = conn
             .process_command(Command::GET {
@@ -386,22 +164,19 @@ mod tests {
             .await;
         assert_eq!(
             response,
-            ProcessOutcome::Respond(Response::Simple("myvalue".into()))
+            ProcessOutcome::Respond(Frame::Bulk(Some("myvalue".into())))
         )
     }
 
     #[tokio::test]
-    async fn get_nonexistent_key_returns_empty_string_response() {
+    async fn get_nonexistent_key_returns_null_bulk_response() {
         let mut conn = setup_dummy_connection();
         let response = conn
             .process_command(Command::GET {
                 key: "mykey".into(),
             })
             .await;
-        assert_eq!(
-            response,
-            ProcessOutcome::Respond(Response::Simple(String::new()))
-        )
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Bulk(None)))
     }
 
     #[tokio::test]
@@ -418,10 +193,7 @@ mod tests {
                 key: "mykey".into(),
             })
             .await;
-        assert_eq!(
-            response,
-            ProcessOutcome::Respond(Response::Simple("1".into()))
-        )
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Integer(1)))
     }
 
     #[tokio::test]
@@ -432,10 +204,7 @@ mod tests {
                 key: "mykey".into(),
             })
             .await;
-        assert_eq!(
-            response,
-            ProcessOutcome::Respond(Response::Simple("0".into()))
-        )
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Integer(0)))
     }
 
     #[tokio::test]
@@ -444,23 +213,23 @@ mod tests {
         let mut client_reader = BufReader::new(client);
         let store = Store::new();
         let mut conn = Connection::new(tokio::io::empty(), server, store);
-        conn.send_response(Response::Simple("OK".into()))
+        conn.send_response(Frame::SimpleString("OK".into()))
             .await
             .unwrap();
-        let mut buf = String::new();
-        client_reader.read_line(&mut buf).await.unwrap();
-        assert_eq!(buf, "OK\n".to_string());
-        conn.send_response(Response::Error("Test".into()))
+        let mut buf = [0; 5];
+        client_reader.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"+OK\r\n");
+        conn.send_response(Frame::SimpleError("Test".into()))
             .await
             .unwrap();
-        let mut buf = String::new();
-        client_reader.read_line(&mut buf).await.unwrap();
-        assert_eq!(buf, "ERR Test\n".to_string())
+        let mut buf = [0; 7];
+        client_reader.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"-Test\r\n")
     }
 
     struct TestCase<'a> {
-        call: &'a str,
-        response: &'a str,
+        call: &'a [u8],
+        response: &'a [u8],
         expected: &'a str,
     }
 
@@ -468,48 +237,48 @@ mod tests {
     async fn e2e_run() {
         let test_cases = vec![
             TestCase {
-                call: "PING\n",
-                response: "PONG\n",
+                call: b"*1\r\n$4\r\nPING\r\n",
+                response: b"+PONG\r\n",
                 expected: "Should respond to PING with PONG",
             },
             TestCase {
-                call: "SET mykey myvalue\n",
-                response: "OK\n",
+                call: b"*3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n",
+                response: b"+OK\r\n",
                 expected: "Should respond to SET with OK",
             },
             TestCase {
-                call: "GET mykey\n",
-                response: "myvalue\n",
+                call: b"*2\r\n$3\r\nGET\r\n$5\r\nmykey\r\n",
+                response: b"$7\r\nmyvalue\r\n",
                 expected: "Should retrieve value of mykey: myvalue",
             },
             TestCase {
-                call: "GET otherkey\n",
-                response: "\n",
-                expected: "Empty keys return empty lines",
+                call: b"*2\r\n$3\r\nGET\r\n$8\r\notherkey\r\n",
+                response: b"$-1\r\n",
+                expected: "Missing keys return null bulk strings",
             },
             TestCase {
-                call: "DEL mykey\n",
-                response: "1\n",
+                call: b"*2\r\n$3\r\nDEL\r\n$5\r\nmykey\r\n",
+                response: b":1\r\n",
                 expected: "Should return 1 if key is successfully deleted",
             },
             TestCase {
-                call: "DEL mykey\n",
-                response: "0\n",
+                call: b"*2\r\n$3\r\nDEL\r\n$5\r\nmykey\r\n",
+                response: b":0\r\n",
                 expected: "Should return 0 if DEL called on a key with no value",
             },
             TestCase {
-                call: "FOO\n",
-                response: "ERR Unknown Command\n",
+                call: b"*1\r\n$3\r\nFOO\r\n",
+                response: b"-Unknown Command\r\n",
                 expected: "Unknown command gives error",
             },
             TestCase {
-                call: "SET mykey myvalue too many\n",
-                response: "ERR Wrong number of arguments\n",
+                call: b"*4\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n$8\r\ntoo many\r\n",
+                response: b"-Wrong number of arguments\r\n",
                 expected: "Wrong number of arguments gives error",
             },
             TestCase {
-                call: "GET\n",
-                response: "ERR Wrong number of arguments\n",
+                call: b"*1\r\n$3\r\nGET\r\n",
+                response: b"-Wrong number of arguments\r\n",
                 expected: "Wrong number of arguments gives error",
             },
         ];
@@ -532,26 +301,26 @@ mod tests {
             expected,
         } in test_cases
         {
-            writer.write_all(call.as_bytes()).await.unwrap();
+            writer.write_all(call).await.unwrap();
             writer.flush().await.unwrap();
-            let read_buffer = &mut String::new();
-            reader.read_line(read_buffer).await.unwrap();
-            assert_eq!(response, read_buffer, "{}", expected);
+            let mut read_buffer = vec![0; response.len()];
+            reader.read_exact(&mut read_buffer).await.unwrap();
+            assert_eq!(response, read_buffer.as_slice(), "{}", expected);
         }
 
-        let read_buffer = &mut String::new();
-        writer.write_all("\n".as_bytes()).await.unwrap();
+        let mut read_buffer = [0; 7];
+        writer.write_all(b"\n").await.unwrap();
         writer.flush().await.unwrap();
-        writer.write_all("PING\n".as_bytes()).await.unwrap();
+        writer.write_all(b"*1\r\n$4\r\nPING\r\n").await.unwrap();
         writer.flush().await.unwrap();
-        reader.read_line(read_buffer).await.unwrap();
-        assert_eq!(read_buffer, "PONG\n", "NOOP should not return anything");
+        reader.read_exact(&mut read_buffer).await.unwrap();
+        assert_eq!(&read_buffer, b"+PONG\r\n", "NOOP should not return anything");
 
-        let read_buffer = &mut String::new();
-        writer.write_all("QUIT\n".as_bytes()).await.unwrap();
+        let mut read_buffer = [0; 1];
+        writer.write_all(b"*1\r\n$4\r\nQUIT\r\n").await.unwrap();
         writer.flush().await.unwrap();
         assert_eq!(
-            reader.read_line(read_buffer).await.unwrap(),
+            reader.read(&mut read_buffer).await.unwrap(),
             0,
             "QUIT should close connection"
         );
