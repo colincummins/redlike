@@ -1,8 +1,11 @@
 #![allow(clippy::upper_case_acronyms)]
 use crate::command::Command;
 use crate::error::Error;
+use crate::parser::Parser;
 use crate::store::Store;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
+};
 
 pub struct Connection<R, W> {
     reader: BufReader<R>,
@@ -55,7 +58,7 @@ where
                 expected: 0,
             }),
             ("GET", [key]) => Ok(Some(Command::GET {
-                key: key.to_string(),
+                key: key.as_bytes().to_vec(),
             })),
             ("GET", rest) => Err(Error::WrongArity {
                 command: "GET".into(),
@@ -63,8 +66,8 @@ where
                 expected: 1,
             }),
             ("SET", [key, value]) => Ok(Some(Command::SET {
-                key: key.to_string(),
-                value: value.to_string(),
+                key: key.as_bytes().to_vec(),
+                value: value.as_bytes().to_vec(),
             })),
             ("SET", rest @ [..]) => Err(Error::WrongArity {
                 command: "SET".into(),
@@ -72,7 +75,7 @@ where
                 expected: 2,
             }),
             ("DEL", [key]) => Ok(Some(Command::DEL {
-                key: key.to_string(),
+                key: key.as_bytes().to_vec(),
             })),
             ("DEL", rest) => Err(Error::WrongArity {
                 command: "DEL".into(),
@@ -99,7 +102,12 @@ where
                 ProcessOutcome::Respond(Response::Simple("OK".into()))
             }
             Command::GET { key } => ProcessOutcome::Respond(Response::Simple(
-                self.store.get(&key).await.unwrap_or_default(),
+                self.store
+                    .get(&key)
+                    .await
+                    .unwrap_or_default()
+                    .try_into()
+                    .unwrap_or_default(),
             )),
             Command::DEL { key } => {
                 let deleted = self.store.del(&key).await.map(|_| "1").unwrap_or("0");
@@ -119,29 +127,42 @@ where
     }
 
     pub async fn run(&mut self) -> Result<(), Error> {
+        let mut p = Parser::new();
+        let mut buf = Vec::<u8>::new();
         loop {
-            let outcome = match self.read_command().await {
-                Ok(None) => break,
-                Ok(Some(Command::NOOP)) => continue,
-                Ok(Some(command)) => self.process_command(command).await,
-                Err(Error::UnknownCommand) => {
-                    ProcessOutcome::Respond(Response::Error("Unknown Command".into()))
+            buf.clear();
+            self.reader.read_buf(&mut buf).await?;
+            if buf.is_empty() {
+                return Ok(());
+            }
+
+            let frames = p.parse(&buf)?;
+
+            for f in frames {
+                let outcome: ProcessOutcome = match Command::try_from(f) {
+                    Ok(cmd) => self.process_command(cmd).await,
+                    Err(Error::UnknownCommand) => {
+                        ProcessOutcome::Respond(Response::Error("Unknown Command".into()))
+                    }
+                    Err(Error::WrongArity {
+                        command: _,
+                        given: _,
+                        expected: _,
+                    }) => {
+                        ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into()))
+                    }
+                    Err(Error::Io(_e)) => break,
+                    Err(Error::InvalidCommandFrame) => break,
+                };
+                match outcome {
+                    ProcessOutcome::Noop => continue,
+                    ProcessOutcome::Quit => {
+                        return Ok(());
+                    }
+                    ProcessOutcome::Respond(r) => self.send_response(r).await?,
                 }
-                Err(Error::WrongArity {
-                    command: _,
-                    given: _,
-                    expected: _,
-                }) => ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into())),
-                Err(Error::Io(_e)) => break,
-                Err(Error::InvalidCommandFrame) => break,
-            };
-            match outcome {
-                ProcessOutcome::Noop => continue,
-                ProcessOutcome::Quit => break,
-                ProcessOutcome::Respond(r) => self.send_response(r).await?,
             }
         }
-        Ok(())
     }
 }
 
@@ -205,7 +226,7 @@ mod tests {
         assert_eq!(
             cmd,
             Some(Command::GET {
-                key: "mykey".to_string()
+                key: "mykey".as_bytes().to_vec()
             })
         );
     }
@@ -233,8 +254,8 @@ mod tests {
         assert_eq!(
             cmd,
             Some(Command::SET {
-                key: "mykey".to_string(),
-                value: "myvalue".to_string()
+                key: "mykey".as_bytes().to_vec(),
+                value: "myvalue".as_bytes().to_vec()
             })
         );
     }
@@ -267,7 +288,7 @@ mod tests {
         assert_eq!(
             cmd,
             Some(Command::DEL {
-                key: "mykey".to_string()
+                key: "mykey".as_bytes().to_vec()
             })
         );
     }
@@ -434,7 +455,7 @@ mod tests {
             .unwrap();
         let mut buf = String::new();
         client_reader.read_line(&mut buf).await.unwrap();
-        assert_eq!(buf, "ERR Test\n".to_string());
+        assert_eq!(buf, "ERR Test\n".to_string())
     }
 
     struct TestCase<'a> {
