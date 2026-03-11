@@ -29,6 +29,18 @@ impl TryFrom<&Frame> for Command {
             .collect::<Result<_, _>>()?;
 
         match args.as_slice() {
+            [cmd] if cmd.eq_ignore_ascii_case(b"ping") => Ok(Command::PING),
+            [cmd, ..] if cmd.eq_ignore_ascii_case(b"ping") => Err(Error::WrongArity {
+                command: "PING".to_string(),
+                given: args.len() - 1,
+                expected: 0,
+            }),
+            [cmd] if cmd.eq_ignore_ascii_case(b"quit") => Ok(Command::QUIT),
+            [cmd, ..] if cmd.eq_ignore_ascii_case(b"quit") => Err(Error::WrongArity {
+                command: "QUIT".to_string(),
+                given: args.len() - 1,
+                expected: 0,
+            }),
             [cmd, key] if cmd.eq_ignore_ascii_case(b"get") => {
                 Ok(Command::GET { key: key.to_vec() })
             }
@@ -81,7 +93,28 @@ mod tests {
         let frame = Frame::Array(Some(vec![bulk(b"GET"), bulk(b"mykey")]));
 
         let command = Command::try_from(frame).unwrap();
-        assert_eq!(command, Command::GET { key: b"mykey".to_vec() });
+        assert_eq!(
+            command,
+            Command::GET {
+                key: b"mykey".to_vec()
+            }
+        );
+    }
+
+    #[test]
+    fn ping_command_parses() {
+        let frame = Frame::Array(Some(vec![bulk(b"PING")]));
+
+        let command = Command::try_from(frame).unwrap();
+        assert_eq!(command, Command::PING);
+    }
+
+    #[test]
+    fn quit_command_parses() {
+        let frame = Frame::Array(Some(vec![bulk(b"QUIT")]));
+
+        let command = Command::try_from(frame).unwrap();
+        assert_eq!(command, Command::QUIT);
     }
 
     #[test]
@@ -103,16 +136,30 @@ mod tests {
         let frame = Frame::Array(Some(vec![bulk(b"DEL"), bulk(b"mykey")]));
 
         let command = Command::try_from(frame).unwrap();
-        assert_eq!(command, Command::DEL { key: b"mykey".to_vec() });
+        assert_eq!(
+            command,
+            Command::DEL {
+                key: b"mykey".to_vec()
+            }
+        );
     }
 
     #[test]
     fn command_name_is_case_insensitive() {
+        let ping = Frame::Array(Some(vec![bulk(b"pInG")]));
+        let quit = Frame::Array(Some(vec![bulk(b"qUiT")]));
         let get = Frame::Array(Some(vec![bulk(b"gEt"), bulk(b"mykey")]));
         let set = Frame::Array(Some(vec![bulk(b"SeT"), bulk(b"mykey"), bulk(b"myvalue")]));
         let del = Frame::Array(Some(vec![bulk(b"dEl"), bulk(b"mykey")]));
 
-        assert_eq!(Command::try_from(get).unwrap(), Command::GET { key: b"mykey".to_vec() });
+        assert_eq!(Command::try_from(ping).unwrap(), Command::PING);
+        assert_eq!(Command::try_from(quit).unwrap(), Command::QUIT);
+        assert_eq!(
+            Command::try_from(get).unwrap(),
+            Command::GET {
+                key: b"mykey".to_vec()
+            }
+        );
         assert_eq!(
             Command::try_from(set).unwrap(),
             Command::SET {
@@ -120,7 +167,12 @@ mod tests {
                 value: b"myvalue".to_vec(),
             }
         );
-        assert_eq!(Command::try_from(del).unwrap(), Command::DEL { key: b"mykey".to_vec() });
+        assert_eq!(
+            Command::try_from(del).unwrap(),
+            Command::DEL {
+                key: b"mykey".to_vec()
+            }
+        );
     }
 
     #[test]
@@ -169,21 +221,30 @@ mod tests {
     fn non_bulk_element_is_invalid() {
         let frame = Frame::Array(Some(vec![bulk(b"GET"), Frame::Integer(1)]));
 
-        assert!(matches!(Command::try_from(frame), Err(Error::InvalidCommandFrame)));
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::InvalidCommandFrame)
+        ));
     }
 
     #[test]
     fn nil_bulk_element_is_invalid() {
         let frame = Frame::Array(Some(vec![bulk(b"GET"), Frame::Bulk(None)]));
 
-        assert!(matches!(Command::try_from(frame), Err(Error::InvalidCommandFrame)));
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::InvalidCommandFrame)
+        ));
     }
 
     #[test]
     fn unknown_command_returns_unknown_command() {
         let frame = Frame::Array(Some(vec![bulk(b"FOO"), bulk(b"bar")]));
 
-        assert!(matches!(Command::try_from(frame), Err(Error::UnknownCommand)));
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::UnknownCommand)
+        ));
     }
 
     #[test]
@@ -197,6 +258,34 @@ mod tests {
                 given: 0,
                 expected: 1,
             }) if command == "GET"
+        ));
+    }
+
+    #[test]
+    fn ping_with_extra_args_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![bulk(b"PING"), bulk(b"extra")]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 1,
+                expected: 0,
+            }) if command == "PING"
+        ));
+    }
+
+    #[test]
+    fn quit_with_extra_args_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![bulk(b"QUIT"), bulk(b"extra")]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 1,
+                expected: 0,
+            }) if command == "QUIT"
         ));
     }
 

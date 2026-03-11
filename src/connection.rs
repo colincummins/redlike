@@ -131,7 +131,7 @@ where
         let mut buf = Vec::<u8>::new();
         loop {
             buf.clear();
-            self.reader.read_to_end(&mut buf).await?;
+            self.reader.read_buf(&mut buf).await?;
             if buf.is_empty() {
                 return Ok(());
             }
@@ -139,49 +139,30 @@ where
             let frames = p.parse(&buf)?;
 
             for f in frames {
-                match Command::try_from(f) {
-                    Ok(cmd) => {
-                        self.process_command(cmd).await;
-                    }
+                let outcome: ProcessOutcome = match Command::try_from(f) {
+                    Ok(cmd) => self.process_command(cmd).await,
                     Err(Error::UnknownCommand) => {
-                        ProcessOutcome::Respond(Response::Error("Unknown Command".into()));
+                        ProcessOutcome::Respond(Response::Error("Unknown Command".into()))
                     }
                     Err(Error::WrongArity {
                         command: _,
                         given: _,
                         expected: _,
                     }) => {
-                        ProcessOutcome::Respond(Response::Error(
-                            "Wrong number of arguments".into(),
-                        ));
+                        ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into()))
                     }
                     Err(Error::Io(_e)) => break,
                     Err(Error::InvalidCommandFrame) => break,
+                };
+                match outcome {
+                    ProcessOutcome::Noop => continue,
+                    ProcessOutcome::Quit => {
+                        return Ok(());
+                    }
+                    ProcessOutcome::Respond(r) => self.send_response(r).await?,
                 }
-            }
-
-            let outcome = match self.read_command().await {
-                Ok(None) => break,
-                Ok(Some(Command::NOOP)) => continue,
-                Ok(Some(command)) => self.process_command(command).await,
-                Err(Error::UnknownCommand) => {
-                    ProcessOutcome::Respond(Response::Error("Unknown Command".into()))
-                }
-                Err(Error::WrongArity {
-                    command: _,
-                    given: _,
-                    expected: _,
-                }) => ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into())),
-                Err(Error::Io(_e)) => break,
-                Err(Error::InvalidCommandFrame) => break,
-            };
-            match outcome {
-                ProcessOutcome::Noop => continue,
-                ProcessOutcome::Quit => break,
-                ProcessOutcome::Respond(r) => self.send_response(r).await?,
             }
         }
-        Ok(())
     }
 }
 
