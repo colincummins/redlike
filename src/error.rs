@@ -7,6 +7,7 @@ pub enum Error {
         expected: usize,
     },
     UnknownCommand,
+    InvalidCommandFrame,
 }
 impl From<tokio::io::Error> for Error {
     fn from(value: tokio::io::Error) -> crate::error::Error {

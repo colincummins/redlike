@@ -1,4 +1,5 @@
 #![allow(clippy::upper_case_acronyms)]
+use crate::command::Command;
 use crate::error::Error;
 use crate::store::Store;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
@@ -7,16 +8,6 @@ pub struct Connection<R, W> {
     reader: BufReader<R>,
     writer: BufWriter<W>,
     store: Store,
-}
-
-#[derive(PartialEq, Eq, Debug)]
-enum Command {
-    PING,
-    GET { key: String },
-    SET { key: String, value: String },
-    DEL { key: String },
-    QUIT,
-    NOOP,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -142,6 +133,7 @@ where
                     expected: _,
                 }) => ProcessOutcome::Respond(Response::Error("Wrong number of arguments".into())),
                 Err(Error::Io(_e)) => break,
+                Err(Error::InvalidCommandFrame) => break,
             };
             match outcome {
                 ProcessOutcome::Noop => continue,
