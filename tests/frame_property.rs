@@ -1,6 +1,6 @@
 use proptest::prelude::*;
 use redlike::frame::Frame;
-use redlike::parser::Parser;
+use redlike::parser::{ParseResult, Parser};
 
 fn arb_frame() -> impl Strategy<Value = Frame> {
     let leaf = prop_oneof![
@@ -24,7 +24,7 @@ proptest! {
     #[test]
     fn frame_bytes_frame(f in arb_frame()) {
         let mut p = Parser::new();
-        prop_assert_eq!(p.parse(f.to_bytes().as_slice()).unwrap(),&[f]);
+        prop_assert_eq!(p.parse(f.to_bytes().as_slice()), ParseResult::Complete(vec![f.clone()]));
         prop_assert!(p.is_empty())
     }
 

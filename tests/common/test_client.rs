@@ -1,5 +1,5 @@
 use redlike::frame::Frame;
-use redlike::parser::Parser;
+use redlike::parser::{ParseResult, Parser};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -34,15 +34,17 @@ impl TestClient {
                 ));
             }
             match parser.parse(&byte[..read]) {
-                Ok(frames) if frames.len() == 1 => return Ok(frames.into_iter().next().unwrap()),
-                Ok(frames) if frames.is_empty() => continue,
-                Ok(_) => {
+                ParseResult::Complete(frames) if frames.len() == 1 => {
+                    return Ok(frames.into_iter().next().unwrap());
+                }
+                ParseResult::Complete(frames) if frames.is_empty() => continue,
+                ParseResult::Complete(_) => {
                     return Err(tokio::io::Error::new(
                         tokio::io::ErrorKind::InvalidData,
                         "received more than one frame",
                     ));
                 }
-                Err(err) => {
+                ParseResult::Partial(_, err) => {
                     return Err(tokio::io::Error::new(
                         tokio::io::ErrorKind::InvalidData,
                         format!("{err:?}"),
