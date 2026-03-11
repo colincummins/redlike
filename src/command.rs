@@ -11,18 +11,19 @@ pub enum Command {
     NOOP,
 }
 
-impl TryFrom<Frame> for Command {
+impl TryFrom<&Frame> for Command {
     type Error = Error;
-    fn try_from(value: Frame) -> Result<Self, Self::Error> {
+
+    fn try_from(value: &Frame) -> Result<Self, Self::Error> {
         let args = match value {
             Frame::Array(Some(inner)) if !inner.is_empty() => inner,
             _ => return Err(Error::InvalidCommandFrame),
         };
 
-        let args: Vec<Vec<u8>> = args
-            .into_iter()
+        let args: Vec<&[u8]> = args
+            .iter()
             .map(|a| match a {
-                Frame::Bulk(Some(i)) => Ok(i),
+                Frame::Bulk(Some(i)) => Ok(i.as_slice()),
                 _ => Err(Error::InvalidCommandFrame),
             })
             .collect::<Result<_, _>>()?;
@@ -56,6 +57,14 @@ impl TryFrom<Frame> for Command {
 
             [..] => Err(Error::UnknownCommand),
         }
+    }
+}
+
+impl TryFrom<Frame> for Command {
+    type Error = Error;
+
+    fn try_from(value: Frame) -> Result<Self, Self::Error> {
+        Command::try_from(&value)
     }
 }
 

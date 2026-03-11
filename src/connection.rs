@@ -1,8 +1,11 @@
 #![allow(clippy::upper_case_acronyms)]
 use crate::command::Command;
 use crate::error::Error;
+use crate::parser::Parser;
 use crate::store::Store;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
+};
 
 pub struct Connection<R, W> {
     reader: BufReader<R>,
@@ -124,7 +127,39 @@ where
     }
 
     pub async fn run(&mut self) -> Result<(), Error> {
+        let mut p = Parser::new();
+        let mut buf = Vec::<u8>::new();
         loop {
+            buf.clear();
+            self.reader.read_to_end(&mut buf).await?;
+            if buf.is_empty() {
+                return Ok(());
+            }
+
+            let frames = p.parse(&buf)?;
+
+            for f in frames {
+                match Command::try_from(f) {
+                    Ok(cmd) => {
+                        self.process_command(cmd).await;
+                    }
+                    Err(Error::UnknownCommand) => {
+                        ProcessOutcome::Respond(Response::Error("Unknown Command".into()));
+                    }
+                    Err(Error::WrongArity {
+                        command: _,
+                        given: _,
+                        expected: _,
+                    }) => {
+                        ProcessOutcome::Respond(Response::Error(
+                            "Wrong number of arguments".into(),
+                        ));
+                    }
+                    Err(Error::Io(_e)) => break,
+                    Err(Error::InvalidCommandFrame) => break,
+                }
+            }
+
             let outcome = match self.read_command().await {
                 Ok(None) => break,
                 Ok(Some(Command::NOOP)) => continue,
