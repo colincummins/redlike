@@ -28,6 +28,12 @@ pub struct Parser {
     stack: Vec<Vec<Frame>>,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum ParseResult {
+    Complete(Vec<Frame>),
+    Partial(Vec<Frame>, ParseError),
+}
+
 impl Default for Parser {
     fn default() -> Self {
         Parser::new()
@@ -48,7 +54,7 @@ impl Parser {
         err
     }
 
-    pub fn parse(&mut self, input: &[u8]) -> Result<Vec<Frame>, ParseError> {
+    pub fn parse(&mut self, input: &[u8]) -> ParseResult {
         self.buf.extend_from_slice(input);
         let mut output = Vec::<Frame>::new();
         loop {
@@ -75,8 +81,11 @@ impl Parser {
 
                     continue;
                 }
-                Ok(None) => return Ok(output),
-                Err(e) => return Err(self.set_error(e)),
+                Ok(None) => return ParseResult::Complete(output),
+                Err(e) => {
+                    self.set_error(e.clone());
+                    return ParseResult::Partial(output, e);
+                }
             }
         }
     }
@@ -259,23 +268,41 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn complete(frames: Vec<Frame>) -> ParseResult {
+        ParseResult::Complete(frames)
+    }
+
+    fn partial(frames: Vec<Frame>, error: ParseError) -> ParseResult {
+        ParseResult::Partial(frames, error)
+    }
+
+    fn expect_complete(result: ParseResult) -> Vec<Frame> {
+        match result {
+            ParseResult::Complete(frames) => frames,
+            ParseResult::Partial(frames, error) => {
+                panic!("expected complete parse result, got partial {frames:?} {error:?}")
+            }
+        }
+    }
+
     mod simple_string_tests {
         use super::*;
         #[test]
         fn incomplete_buffer_gets_ok_none() {
             let mut p = Parser::new();
             let buf = b"+";
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
             let mut p = Parser::new();
             let buf = b"+OK";
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn parse_empty_simple_string() {
             let mut p = Parser::new();
             let buf = b"+\r\n";
-            assert_eq!(p.parse(buf), Ok(vec![Frame::SimpleString("".to_string())]))
+            assert_eq!(p.parse(buf), complete(vec![Frame::SimpleString("".to_string())]))
         }
 
         #[test]
@@ -284,7 +311,7 @@ mod tests {
             let buf = b"+OK\r\n";
             assert_eq!(
                 p.parse(buf),
-                Ok(vec![Frame::SimpleString("OK".to_string())])
+                complete(vec![Frame::SimpleString("OK".to_string())])
             )
         }
     }
@@ -294,17 +321,17 @@ mod tests {
         fn incomplete_buffer_gets_ok_none() {
             let mut p = Parser::new();
             let buf = b"-";
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
             let mut p = Parser::new();
             let buf = b"-OK";
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn parse_empty_simple_error() {
             let mut p = Parser::new();
             let buf = b"-\r\n";
-            assert_eq!(p.parse(buf), Ok(vec![Frame::SimpleError("".to_string())]))
+            assert_eq!(p.parse(buf), complete(vec![Frame::SimpleError("".to_string())]))
         }
 
         #[test]
@@ -313,7 +340,7 @@ mod tests {
             let buf = b"-This is a simple error\r\n";
             assert_eq!(
                 p.parse(buf),
-                Ok(vec![Frame::SimpleError(
+                complete(vec![Frame::SimpleError(
                     "This is a simple error".to_string()
                 )])
             )
@@ -326,10 +353,8 @@ mod tests {
                 let mut p = Parser::new();
                 let mut builder: Vec<Frame> = Vec::new();
                 let (left, right) = full_buf.split_at(i);
-                let mut result = p.parse(left).unwrap();
-                builder.append(&mut result);
-                let mut result = p.parse(right).unwrap();
-                builder.append(&mut result);
+                builder.extend(expect_complete(p.parse(left)));
+                builder.extend(expect_complete(p.parse(right)));
                 assert_eq!(
                     builder,
                     vec![Frame::SimpleError("This is a simple error".to_string())]
@@ -344,35 +369,35 @@ mod tests {
         fn bulk_string_marker_only_returns_none() {
             let mut p = Parser::new();
             let buf = &b"$"[..];
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn incomplete_length_returns_none() {
             let mut p = Parser::new();
             let buf = &b"$5"[..];
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn complete_length_but_no_payload_returns_none() {
             let mut p = Parser::new();
             let buf = b"$5\r\n";
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn complete_length_but_incomplete_payload_returns_none() {
             let mut p = Parser::new();
             let buf = b"$5\r\nh";
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn out_of_bounds_length_returns_error() {
             let mut p = Parser::new();
             let buf = b"$-2\r\n";
-            assert_eq!(p.parse(buf), Err(ParseError::InvalidLength));
+            assert_eq!(p.parse(buf), partial(Vec::new(), ParseError::InvalidLength));
             assert_eq!(p.state, State::Error(ParseError::InvalidLength))
         }
 
@@ -380,21 +405,24 @@ mod tests {
         fn minus_one_returns_nil_bulk_string() {
             let mut p = Parser::new();
             let buf = b"$-1\r\n";
-            assert_eq!(p.parse(buf), Ok(vec![Frame::Bulk(None)]))
+            assert_eq!(p.parse(buf), complete(vec![Frame::Bulk(None)]))
         }
 
         #[test]
         fn zero_length_bulk_string() {
             let mut p = Parser::new();
             let buf = b"$0\r\n\r\n";
-            assert_eq!(p.parse(buf), Ok(vec![Frame::Bulk(Some(vec![]))]));
+            assert_eq!(p.parse(buf), complete(vec![Frame::Bulk(Some(vec![]))]));
         }
 
         #[test]
         fn payload_continues_past_expected_length_gets_error() {
             let mut p = Parser::new();
             let buf = b"$5\r\nhellothere\r\n";
-            assert_eq!(p.parse(buf), Err(ParseError::UnreadableBulkString));
+            assert_eq!(
+                p.parse(buf),
+                partial(Vec::new(), ParseError::UnreadableBulkString)
+            );
             assert_eq!(p.state, State::Error(ParseError::UnreadableBulkString));
         }
 
@@ -402,7 +430,10 @@ mod tests {
         fn payload_is_not_terminated_at_expected_length_gets_error() {
             let mut p = Parser::new();
             let buf = b"$5\r\nhellothere\r\n";
-            assert_eq!(p.parse(buf), Err(ParseError::UnreadableBulkString));
+            assert_eq!(
+                p.parse(buf),
+                partial(Vec::new(), ParseError::UnreadableBulkString)
+            );
             assert_eq!(p.state, State::Error(ParseError::UnreadableBulkString));
         }
 
@@ -410,7 +441,7 @@ mod tests {
         fn proper_payload_parsed_leaving_remaining_buffer() {
             let mut p = Parser::new();
             let buf = b"$5\r\nhello\r\nleftovers";
-            assert_eq!(p.parse(buf), Ok(vec![Frame::Bulk(Some(b"hello".to_vec()))]));
+            assert_eq!(p.parse(buf), complete(vec![Frame::Bulk(Some(b"hello".to_vec()))]));
             assert_eq!(p.buf, b"leftovers")
         }
 
@@ -421,10 +452,8 @@ mod tests {
                 let mut p = Parser::new();
                 let mut builder: Vec<Frame> = Vec::new();
                 let (left, right) = full_buf.split_at(i);
-                let mut result = p.parse(left).unwrap();
-                builder.append(&mut result);
-                let mut result = p.parse(right).unwrap();
-                builder.append(&mut result);
+                builder.extend(expect_complete(p.parse(left)));
+                builder.extend(expect_complete(p.parse(right)));
                 assert_eq!(
                     builder,
                     vec![
@@ -443,21 +472,21 @@ mod tests {
         fn array_marker_only_returns_none() {
             let mut p = Parser::new();
             let buf = &b"*"[..];
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn incomplete_length_returns_none() {
             let mut p = Parser::new();
             let buf = &b"*5"[..];
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn out_of_bounds_length_returns_error() {
             let mut p = Parser::new();
             let buf = b"*-2\r\n";
-            assert_eq!(p.parse(buf), Err(ParseError::InvalidLength));
+            assert_eq!(p.parse(buf), partial(Vec::new(), ParseError::InvalidLength));
             assert_eq!(p.state, State::Error(ParseError::InvalidLength))
         }
 
@@ -465,21 +494,21 @@ mod tests {
         fn minus_one_returns_nil_array() {
             let mut p = Parser::new();
             let buf = b"*-1\r\n";
-            assert_eq!(p.parse(buf), Ok(vec![Frame::Array(None)]))
+            assert_eq!(p.parse(buf), complete(vec![Frame::Array(None)]))
         }
 
         #[test]
         fn zero_length_array() {
             let mut p = Parser::new();
             let buf = b"*0\r\n";
-            assert_eq!(p.parse(buf), Ok(vec![Frame::Array(Some(Vec::new()))]));
+            assert_eq!(p.parse(buf), complete(vec![Frame::Array(Some(Vec::new()))]));
         }
 
         #[test]
         fn complete_length_but_no_payload_returns_no_frames() {
             let mut p = Parser::new();
             let buf = b"*5\r\n";
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
@@ -488,7 +517,7 @@ mod tests {
             let buf = b"*3\r\n$5\r\nhello\r\n$3\r\nbye\r\n$4\r\nmore\r\n$8leftover";
             assert_eq!(
                 p.parse(buf),
-                Ok(vec![Frame::Array(Some(vec![
+                complete(vec![Frame::Array(Some(vec![
                     Frame::Bulk(Some(b"hello".to_vec())),
                     Frame::Bulk(Some(b"bye".to_vec())),
                     Frame::Bulk(Some(b"more".to_vec()))
@@ -503,8 +532,8 @@ mod tests {
                 let mut result = Vec::<Frame>::new();
                 let mut p = Parser::new();
                 let (left, right) = buf.split_at(i);
-                result.extend(p.parse(left).unwrap());
-                result.extend(p.parse(right).unwrap());
+                result.extend(expect_complete(p.parse(left)));
+                result.extend(expect_complete(p.parse(right)));
                 assert_eq!(
                     result,
                     vec![Frame::Array(Some(vec![
@@ -522,7 +551,7 @@ mod tests {
             let buf = b"*1\r\n*1\r\n*2\r\n$1\r\na\r\n*-1\r\n";
             assert_eq!(
                 p.parse(buf),
-                Ok(vec![Frame::Array(Some(vec![Frame::Array(Some(vec![
+                complete(vec![Frame::Array(Some(vec![Frame::Array(Some(vec![
                     Frame::Array(Some(vec![
                         Frame::Bulk(Some(b"a".to_vec())),
                         Frame::Array(None)
@@ -538,8 +567,8 @@ mod tests {
                 let mut result = Vec::<Frame>::new();
                 let mut p = Parser::new();
                 let (left, right) = buf.split_at(i);
-                result.extend(p.parse(left).unwrap());
-                result.extend(p.parse(right).unwrap());
+                result.extend(expect_complete(p.parse(left)));
+                result.extend(expect_complete(p.parse(right)));
                 assert_eq!(
                     result,
                     vec![Frame::Array(Some(vec![Frame::Array(Some(vec![
@@ -558,21 +587,21 @@ mod tests {
         fn integer_marker_only_returns_none() {
             let mut p = Parser::new();
             let buf = &b":"[..];
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn unterminated_integer_returns_none() {
             let mut p = Parser::new();
             let buf = &b":12345"[..];
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn proper_integer_parsed_leaving_buffer() {
             let mut p = Parser::new();
             let buf = b":12345\r\nleftovers";
-            assert_eq!(p.parse(buf), Ok(vec![Frame::Integer(12345)]));
+            assert_eq!(p.parse(buf), complete(vec![Frame::Integer(12345)]));
             assert_eq!(p.buf, b"leftovers")
         }
 
@@ -584,7 +613,7 @@ mod tests {
             assert_eq!(p.state, State::Start);
             assert_eq!(
                 result,
-                Ok(vec![Frame::Integer(12345), Frame::Integer(-567890)])
+                complete(vec![Frame::Integer(12345), Frame::Integer(-567890)])
             );
         }
 
@@ -593,8 +622,8 @@ mod tests {
             let mut p = Parser::new();
             let left = b":";
             let right = b"-123\r\n";
-            assert_eq!(p.parse(left), Ok(vec![]));
-            assert_eq!(p.parse(right), Ok(vec![Frame::Integer(-123)]));
+            assert_eq!(p.parse(left), complete(vec![]));
+            assert_eq!(p.parse(right), complete(vec![Frame::Integer(-123)]));
         }
 
         #[test]
@@ -604,10 +633,8 @@ mod tests {
                 let mut p = Parser::new();
                 let mut builder: Vec<Frame> = Vec::new();
                 let (left, right) = full_buf.split_at(i);
-                let mut result = p.parse(left).unwrap();
-                builder.append(&mut result);
-                let mut result = p.parse(right).unwrap();
-                builder.append(&mut result);
+                builder.extend(expect_complete(p.parse(left)));
+                builder.extend(expect_complete(p.parse(right)));
                 assert_eq!(
                     builder,
                     vec![
@@ -625,14 +652,14 @@ mod tests {
         fn unterminated_inline_returns_none() {
             let mut p = Parser::new();
             let buf = &b"h"[..];
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
         fn empty_inlines_return_none() {
             let mut p = Parser::new();
             let buf = &b"\r\n"[..];
-            assert_eq!(p.parse(buf), Ok(Vec::new()));
+            assert_eq!(p.parse(buf), complete(Vec::new()));
         }
 
         #[test]
@@ -641,7 +668,7 @@ mod tests {
             let buf = &b"hello\n"[..];
             assert_eq!(
                 p.parse(buf),
-                Ok(vec![Frame::Array(Some(vec![Frame::Bulk(Some(
+                complete(vec![Frame::Array(Some(vec![Frame::Bulk(Some(
                     b"hello".to_vec()
                 )),])),])
             );
@@ -654,8 +681,8 @@ mod tests {
                 let mut result = Vec::<Frame>::new();
                 let mut p = Parser::new();
                 let (left, right) = buf.split_at(i);
-                result.extend(p.parse(left).unwrap());
-                result.extend(p.parse(right).unwrap());
+                result.extend(expect_complete(p.parse(left)));
+                result.extend(expect_complete(p.parse(right)));
                 assert_eq!(
                     result,
                     vec![
@@ -670,6 +697,20 @@ mod tests {
                     ]
                 )
             }
+        }
+
+        #[test]
+        fn returns_completed_inline_frame_before_error() {
+            let mut p = Parser::new();
+            let buf = b"PING\n$-2\r\n";
+            assert_eq!(
+                p.parse(buf),
+                partial(
+                    vec![Frame::Array(Some(vec![Frame::Bulk(Some(b"PING".to_vec()))]))],
+                    ParseError::InvalidLength
+                )
+            );
+            assert_eq!(p.state, State::Error(ParseError::InvalidLength));
         }
     }
 }

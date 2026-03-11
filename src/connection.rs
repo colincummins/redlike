@@ -2,11 +2,9 @@
 use crate::command::Command;
 use crate::error::Error;
 use crate::frame::Frame;
-use crate::parser::Parser;
+use crate::parser::{ParseResult, Parser};
 use crate::store::Store;
-use tokio::io::{
-    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter,
-};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
 pub struct Connection<R, W> {
     reader: BufReader<R>,
@@ -71,7 +69,10 @@ where
                 return Ok(());
             }
 
-            let frames = p.parse(&buf)?;
+            let (frames, halting_error) = match p.parse(&buf) {
+                ParseResult::Complete(f) => (f, None),
+                ParseResult::Partial(f, e) => (f, Some(e)),
+            };
 
             for f in frames {
                 let outcome: ProcessOutcome = match Command::try_from(f) {
@@ -86,8 +87,8 @@ where
                     }) => ProcessOutcome::Respond(Frame::SimpleError(
                         "Wrong number of arguments".into(),
                     )),
-                    Err(Error::Io(_e)) => break,
-                    Err(Error::InvalidCommandFrame) => break,
+                    Err(Error::Io(_e)) => return Ok(()),
+                    Err(Error::InvalidCommandFrame) => return Ok(()),
                 };
                 match outcome {
                     ProcessOutcome::Noop => continue,
@@ -96,6 +97,9 @@ where
                     }
                     ProcessOutcome::Respond(r) => self.send_response(r).await?,
                 }
+            }
+            if halting_error.is_some() {
+                return Ok(());
             }
         }
     }
@@ -314,7 +318,10 @@ mod tests {
         writer.write_all(b"*1\r\n$4\r\nPING\r\n").await.unwrap();
         writer.flush().await.unwrap();
         reader.read_exact(&mut read_buffer).await.unwrap();
-        assert_eq!(&read_buffer, b"+PONG\r\n", "NOOP should not return anything");
+        assert_eq!(
+            &read_buffer, b"+PONG\r\n",
+            "NOOP should not return anything"
+        );
 
         let mut read_buffer = [0; 1];
         writer.write_all(b"*1\r\n$4\r\nQUIT\r\n").await.unwrap();

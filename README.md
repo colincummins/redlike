@@ -1,37 +1,63 @@
 # redlike
-Redlike is a concurrent, in-memory key–value store that communicates with clients over TCP using a simple, line-based text protocol.
+Redlike is a concurrent, in-memory key-value store that communicates with clients over TCP using RESP, with optional inline terminal-style commands.
 
 # API Specification
 
 ## Transport
 
-* **Protocol:** TCP
-* **Default Address:** `127.0.0.1:6379`
-* **Connection Model:** Persistent connections
-  A client may send multiple commands over a single connection.
+* Protocol: TCP
+* Default address: `127.0.0.1:6379`
+* Connection model: persistent connections
 
 ---
 
 ## Protocol Overview
 
-* Commands are **ASCII text**
-* Commands are **line-based**
-* Each command ends with `\r\n`
-* Responses are also line-based and terminated with `\r\n`
-* Commands and keys are **case-sensitive**
-* Values are treated as opaque strings
+The server accepts two request formats:
+
+* RESP arrays containing bulk strings, for example `*1\r\n$4\r\nPING\r\n`
+* Inline commands terminated by `\n`, for example `PING\n`
+
+Responses are always encoded as RESP frames.
+
+Command names are case-insensitive. Keys and values are treated as raw bytes when sent as RESP bulk strings.
 
 ---
 
-## Request Format
+## Request Formats
+
+### RESP
 
 ```
-COMMAND [ARG1] [ARG2] ...\r\n
+*<n>\r\n
+$<len>\r\nCOMMAND\r\n
+$<len>\r\nARG1\r\n
+...
 ```
 
-* Tokens are separated by **single spaces**
-* Leading/trailing whitespace is ignored
-* Empty lines are ignored
+Examples:
+
+```text
+*1\r\n$4\r\nPING\r\n
+*2\r\n$3\r\nGET\r\n$5\r\nmykey\r\n
+*3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n
+```
+
+### Inline
+
+```text
+COMMAND [ARG1] [ARG2]...\n
+```
+
+Examples:
+
+```text
+PING\n
+GET mykey\n
+SET mykey myvalue\n
+```
+
+Blank inline lines are ignored.
 
 ---
 
@@ -39,187 +65,137 @@ COMMAND [ARG1] [ARG2] ...\r\n
 
 ### `PING`
 
-**Description:**
-Health check command.
+Request:
 
-**Request:**
-
-```
-PING\r\n
+```text
+*1\r\n$4\r\nPING\r\n
 ```
 
-**Response:**
+or
 
+```text
+PING\n
 ```
-PONG\r\n
+
+Response:
+
+```text
++PONG\r\n
 ```
 
 ---
 
 ### `GET key`
 
-**Description:**
-Retrieve the value associated with `key`.
+Request:
 
-**Request:**
-
-```
-GET mykey\r\n
+```text
+*2\r\n$3\r\nGET\r\n$5\r\nmykey\r\n
 ```
 
-**Responses:**
+Response when key exists:
 
-* If key exists:
+```text
+$7\r\nmyvalue\r\n
+```
 
-  ```
-  VALUE myvalue\r\n
-  ```
-* If key does not exist:
+Response when key does not exist:
 
-  ```
-  NIL\r\n
-  ```
+```text
+$-1\r\n
+```
 
 ---
 
 ### `SET key value`
 
-**Description:**
-Set `key` to `value`, overwriting any existing value.
+Request:
 
-**Request:**
-
-```
-SET mykey myvalue\r\n
+```text
+*3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n
 ```
 
-**Response:**
+Response:
 
-```
-OK\r\n
+```text
++OK\r\n
 ```
 
 ---
 
 ### `DEL key`
 
-**Description:**
-Delete a key if it exists.
+Request:
 
-**Request:**
-
-```
-DEL mykey\r\n
+```text
+*2\r\n$3\r\nDEL\r\n$5\r\nmykey\r\n
 ```
 
-**Responses:**
+Response when key was deleted:
 
-* If key was deleted:
+```text
+:1\r\n
+```
 
-  ```
-  OK\r\n
-  ```
-* If key did not exist:
+Response when key did not exist:
 
-  ```
-  NIL\r\n
-  ```
+```text
+:0\r\n
+```
 
 ---
 
 ### `QUIT`
 
-**Description:**
-Close the client connection.
+Request:
 
-**Request:**
-
-```
-QUIT\r\n
+```text
+*1\r\n$4\r\nQUIT\r\n
 ```
 
-**Response:**
-
-```
-BYE\r\n
-```
-
-The server closes the connection after sending the response.
+The server closes the connection without sending a response frame.
 
 ---
 
 ## Error Handling
 
-Errors are returned as explicit protocol responses.
+For valid request frames that contain an unknown command or the wrong number of arguments, the server replies with a RESP simple error:
 
-### Error Response Format
-
+```text
+-Unknown Command\r\n
+-Wrong number of arguments\r\n
 ```
-ERROR <message>\r\n
-```
 
-### Examples
-
-* Unknown command:
-
-  ```
-  ERROR unknown command\r\n
-  ```
-
-* Invalid argument count:
-
-  ```
-  ERROR invalid arguments\r\n
-  ```
-
-* Malformed request:
-
-  ```
-  ERROR protocol error\r\n
-  ```
-
-Errors do **not** close the connection unless otherwise specified.
+If the input stream becomes malformed at the protocol level, the parser enters a terminal error state. Any frames completed before the error are still processed, then the connection is closed.
 
 ---
 
 ## Concurrency Model
 
-* Each client connection is handled asynchronously
-* The underlying key–value store is shared safely across connections
-* Commands are processed sequentially per connection
-
----
-
-## Limits
-
-* Maximum request line length: **8 KB**
-* Keys and values must fit within a single request line
-* Requests exceeding limits return:
-
-  ```
-  ERROR request too large\r\n
-  ```
+* Each client connection is handled asynchronously.
+* The underlying key-value store is shared across connections.
+* Commands are processed sequentially per connection.
 
 ---
 
 ## Example Session
 
-```
-> PING
-< PONG
+```text
+> *1\r\n$4\r\nPING\r\n
+< +PONG\r\n
 
-> SET language rust
-< OK
+> SET language rust\n
+< +OK\r\n
 
-> GET language
-< VALUE rust
+> GET language\n
+< $4\r\nrust\r\n
 
-> DEL language
-< OK
+> DEL language\n
+< :1\r\n
 
-> GET language
-< NIL
+> GET language\n
+< $-1\r\n
 
-> QUIT
-< BYE
+> QUIT\n
+< [connection closed]
 ```
