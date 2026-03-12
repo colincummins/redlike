@@ -79,7 +79,6 @@ impl TryFrom<&Frame> for Command {
                     Err(e) => Err(e),
                 }
             }
-
             [cmd, ..] if cmd.eq_ignore_ascii_case(b"expire") => Err(Error::WrongArity {
                 command: "EXPIRE".to_string(),
                 given: args.len() - 1,
@@ -165,11 +164,7 @@ mod tests {
 
     #[test]
     fn expire_command_parses() {
-        let frame = Frame::Array(Some(vec![
-            bulk(b"EXPIRE"),
-            bulk(b"mykey"),
-            bulk(b"123"),
-        ]));
+        let frame = Frame::Array(Some(vec![bulk(b"EXPIRE"), bulk(b"mykey"), bulk(b"123")]));
 
         let command = Command::try_from(frame).unwrap();
         assert_eq!(
@@ -188,11 +183,7 @@ mod tests {
         let get = Frame::Array(Some(vec![bulk(b"gEt"), bulk(b"mykey")]));
         let set = Frame::Array(Some(vec![bulk(b"SeT"), bulk(b"mykey"), bulk(b"myvalue")]));
         let del = Frame::Array(Some(vec![bulk(b"dEl"), bulk(b"mykey")]));
-        let expire = Frame::Array(Some(vec![
-            bulk(b"eXpIrE"),
-            bulk(b"mykey"),
-            bulk(b"60"),
-        ]));
+        let expire = Frame::Array(Some(vec![bulk(b"eXpIrE"), bulk(b"mykey"), bulk(b"60")]));
 
         assert_eq!(Command::try_from(ping).unwrap(), Command::PING);
         assert_eq!(Command::try_from(quit).unwrap(), Command::QUIT);

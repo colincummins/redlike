@@ -48,6 +48,9 @@ where
                 let deleted = self.store.del(&key).await.map(|_| 1).unwrap_or(0);
                 ProcessOutcome::Respond(Frame::Integer(deleted.into()))
             }
+            Command::EXPIRE { key: _, value: _ } => {
+                todo!();
+            }
         }
     }
 
@@ -87,6 +90,9 @@ where
                     }) => ProcessOutcome::Respond(Frame::SimpleError(
                         "Wrong number of arguments".into(),
                     )),
+                    Err(Error::WrongArgumentType) => {
+                        ProcessOutcome::Respond(Frame::SimpleError("Wrong Argument Type".into()))
+                    }
                     Err(Error::Io(_e)) => return Ok(()),
                     Err(Error::InvalidCommandFrame) => return Ok(()),
                 };

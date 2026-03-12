@@ -1,9 +1,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::time::{Duration, Instant};
 
 pub struct Store {
-    inner: Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>,
+    inner: Arc<RwLock<HashMap<Vec<u8>, StoreValue>>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct StoreValue {
+    value: Vec<u8>,
+    expiration_time: Option<Instant>,
 }
 
 impl Store {
@@ -15,17 +22,45 @@ impl Store {
 
     pub async fn get(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
         let map = self.inner.read().await;
-        map.get(key).cloned()
+        match map.get(key) {
+            None => None,
+            Some(StoreValue {
+                value: v,
+                expiration_time: None,
+            }) => Some(v.to_vec()),
+            Some(StoreValue {
+                value: v,
+                expiration_time: _,
+            }) => Some(v.to_vec()),
+        }
     }
 
     pub async fn set(&self, key: Vec<u8>, value: Vec<u8>) -> Option<Vec<u8>> {
         let mut map = self.inner.write().await;
-        map.insert(key, value)
+        match map.insert(
+            key,
+            StoreValue {
+                value: value.clone(),
+                expiration_time: None,
+            },
+        ) {
+            None => None,
+            Some(StoreValue {
+                value: v,
+                expiration_time: _,
+            }) => Some(v.to_vec()),
+        }
     }
 
     pub async fn del(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
         let mut map = self.inner.write().await;
-        map.remove(key)
+        match map.remove(key) {
+            None => None,
+            Some(StoreValue {
+                value: v,
+                expiration_time: _,
+            }) => Some(v.to_vec()),
+        }
     }
 }
 
