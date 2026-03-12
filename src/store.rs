@@ -14,6 +14,9 @@ struct StoreValue {
 }
 
 impl Store {
+    fn is_expired(&self, value: &StoreValue, now: Instant) -> bool {
+        matches!(value.expiration_time, Some(t) if t <= now)
+    }
     pub fn new() -> Store {
         Store {
             inner: Arc::new(RwLock::new(HashMap::new())),
@@ -22,12 +25,10 @@ impl Store {
 
     pub async fn get(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
         let map = self.inner.read().await;
+        let now = Instant::now();
         match map.get(key) {
             None => None,
-            Some(StoreValue {
-                value: v,
-                expiration_time: None,
-            }) => Some(v.to_vec()),
+            Some(v) if self.is_expired(v, now) => None,
             Some(StoreValue {
                 value: v,
                 expiration_time: _,
@@ -53,13 +54,15 @@ impl Store {
     }
 
     pub async fn del(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
+        let now = Instant::now();
         let mut map = self.inner.write().await;
-        map.remove(key).map(
-            |StoreValue {
-                 value: v,
-                 expiration_time: _,
-             }| v.to_vec(),
-        )
+        match map.remove(key) {
+            Some(v) if self.is_expired(&v, now) => None,
+
+            None => None,
+
+            Some(StoreValue { value, .. }) => Some(value.to_vec()),
+        }
     }
 
     pub async fn expire(&self, key: Vec<u8>, ttl: u64) -> u8 {
@@ -67,13 +70,7 @@ impl Store {
         let now = Instant::now();
         let ttl_duration = Duration::new(ttl, 0);
         match map.remove_entry(&key) {
-            Some((
-                k,
-                StoreValue {
-                    value,
-                    expiration_time: Some(t),
-                },
-            )) if t <= now => 0,
+            Some(v) if self.is_expired(&v.1, now) => 0,
 
             None => 0,
 
@@ -108,6 +105,7 @@ impl Default for Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time::sleep;
 
     #[tokio::test]
     async fn set_then_get() {
@@ -140,5 +138,56 @@ mod tests {
     async fn delete_nonexistent_key() {
         let store = Store::new();
         assert!(store.del(&"newkey".as_bytes().to_vec()).await.is_none())
+    }
+
+    #[tokio::test]
+    async fn get_returns_none_for_expired_key() {
+        let store = Store::new();
+        let key = b"expiring-key".to_vec();
+        let value = b"value".to_vec();
+
+        store.set(key.clone(), value).await;
+        assert_eq!(store.expire(key.clone(), 0).await, 1);
+
+        sleep(Duration::from_millis(1)).await;
+
+        assert_eq!(None, store.get(&key).await);
+    }
+
+    #[tokio::test]
+    async fn del_returns_none_for_expired_key() {
+        let store = Store::new();
+        let key = b"expiring-key".to_vec();
+        let value = b"value".to_vec();
+
+        store.set(key.clone(), value).await;
+        assert_eq!(store.expire(key.clone(), 0).await, 1);
+
+        sleep(Duration::from_millis(1)).await;
+
+        assert_eq!(None, store.del(&key).await);
+    }
+
+    #[tokio::test]
+    async fn expire_returns_one_for_live_key() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+
+        store.set(key.clone(), b"value".to_vec()).await;
+
+        assert_eq!(1, store.expire(key, 60).await);
+    }
+
+    #[tokio::test]
+    async fn expire_returns_zero_for_expired_key() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+
+        store.set(key.clone(), b"value".to_vec()).await;
+        assert_eq!(1, store.expire(key.clone(), 0).await);
+
+        sleep(Duration::from_millis(1)).await;
+
+        assert_eq!(0, store.expire(key, 60).await);
     }
 }
