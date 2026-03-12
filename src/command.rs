@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::frame::Frame;
+use std::str;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Command {
@@ -12,81 +13,110 @@ pub enum Command {
     NOOP,
 }
 
+fn bulk_args(value: &Frame) -> Result<Vec<&[u8]>, Error> {
+    let args = match value {
+        Frame::Array(Some(inner)) if !inner.is_empty() => inner,
+        _ => return Err(Error::InvalidCommandFrame),
+    };
+
+    args.iter()
+        .map(|arg| match arg {
+            Frame::Bulk(Some(inner)) => Ok(inner.as_slice()),
+            _ => Err(Error::InvalidCommandFrame),
+        })
+        .collect()
+}
+
+fn wrong_arity(command: &str, given: usize, expected: usize) -> Error {
+    Error::WrongArity {
+        command: command.to_string(),
+        given,
+        expected,
+    }
+}
+
+fn parse_ping(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [] => Ok(Command::PING),
+        _ => Err(wrong_arity("PING", argv.len(), 0)),
+    }
+}
+
+fn parse_quit(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [] => Ok(Command::QUIT),
+        _ => Err(wrong_arity("QUIT", argv.len(), 0)),
+    }
+}
+
+fn parse_get(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key] => Ok(Command::GET { key: key.to_vec() }),
+        _ => Err(wrong_arity("GET", argv.len(), 1)),
+    }
+}
+
+fn parse_set(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key, value] => Ok(Command::SET {
+            key: key.to_vec(),
+            value: value.to_vec(),
+        }),
+        _ => Err(wrong_arity("SET", argv.len(), 2)),
+    }
+}
+
+fn parse_del(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key] => Ok(Command::DEL { key: key.to_vec() }),
+        _ => Err(wrong_arity("DEL", argv.len(), 1)),
+    }
+}
+
+fn parse_u64_arg(value: &[u8]) -> Result<u64, Error> {
+    str::from_utf8(value)
+        .map_err(|_| Error::WrongArgumentType)?
+        .parse::<u64>()
+        .map_err(|_| Error::WrongArgumentType)
+}
+
+fn parse_expire(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key, value] => Ok(Command::EXPIRE {
+            key: key.to_vec(),
+            value: parse_u64_arg(value)?,
+        }),
+        _ => Err(wrong_arity("EXPIRE", argv.len(), 2)),
+    }
+}
+
 impl TryFrom<&Frame> for Command {
     type Error = Error;
 
     fn try_from(value: &Frame) -> Result<Self, Self::Error> {
-        let args = match value {
-            Frame::Array(Some(inner)) if !inner.is_empty() => inner,
-            _ => return Err(Error::InvalidCommandFrame),
-        };
+        let args = bulk_args(value)?;
+        let (cmd, argv) = args.split_first().ok_or(Error::InvalidCommandFrame)?;
 
-        let args: Vec<&[u8]> = args
-            .iter()
-            .map(|a| match a {
-                Frame::Bulk(Some(i)) => Ok(i.as_slice()),
-                _ => Err(Error::InvalidCommandFrame),
-            })
-            .collect::<Result<_, _>>()?;
-
-        match args.as_slice() {
-            [cmd] if cmd.eq_ignore_ascii_case(b"ping") => Ok(Command::PING),
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"ping") => Err(Error::WrongArity {
-                command: "PING".to_string(),
-                given: args.len() - 1,
-                expected: 0,
-            }),
-            [cmd] if cmd.eq_ignore_ascii_case(b"quit") => Ok(Command::QUIT),
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"quit") => Err(Error::WrongArity {
-                command: "QUIT".to_string(),
-                given: args.len() - 1,
-                expected: 0,
-            }),
-            [cmd, key] if cmd.eq_ignore_ascii_case(b"get") => {
-                Ok(Command::GET { key: key.to_vec() })
-            }
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"get") => Err(Error::WrongArity {
-                command: "GET".to_string(),
-                given: args.len() - 1,
-                expected: 1,
-            }),
-            [cmd, key, value] if cmd.eq_ignore_ascii_case(b"set") => Ok(Command::SET {
-                key: key.to_vec(),
-                value: value.to_vec(),
-            }),
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"set") => Err(Error::WrongArity {
-                command: "SET".to_string(),
-                given: args.len() - 1,
-                expected: 2,
-            }),
-            [cmd, key] if cmd.eq_ignore_ascii_case(b"del") => {
-                Ok(Command::DEL { key: key.to_vec() })
-            }
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"del") => Err(Error::WrongArity {
-                command: "DEL".to_string(),
-                given: args.len() - 1,
-                expected: 1,
-            }),
-            [cmd, key, value] if cmd.eq_ignore_ascii_case(b"expire") => {
-                match String::from_utf8(value.to_vec())
-                    .map_err(|_| Error::WrongArgumentType)
-                    .and_then(|v| v.parse::<u64>().map_err(|_| Error::WrongArgumentType))
-                {
-                    Ok(v) => Ok(Command::EXPIRE {
-                        key: key.to_vec(),
-                        value: v,
-                    }),
-                    Err(e) => Err(e),
-                }
-            }
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"expire") => Err(Error::WrongArity {
-                command: "EXPIRE".to_string(),
-                given: args.len() - 1,
-                expected: 2,
-            }),
-
-            [..] => Err(Error::UnknownCommand),
+        if cmd.eq_ignore_ascii_case(b"ping") {
+            return parse_ping(argv);
         }
+        if cmd.eq_ignore_ascii_case(b"quit") {
+            return parse_quit(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"get") {
+            return parse_get(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"set") {
+            return parse_set(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"del") {
+            return parse_del(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"expire") {
+            return parse_expire(argv);
+        }
+
+        Err(Error::UnknownCommand)
     }
 }
 
