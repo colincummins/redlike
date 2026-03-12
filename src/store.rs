@@ -61,6 +61,34 @@ impl Store {
              }| v.to_vec(),
         )
     }
+
+    pub async fn expire(&self, key: Vec<u8>, ttl: u64) -> u8 {
+        let mut map = self.inner.write().await;
+        let now = Instant::now();
+        let ttl_duration = Duration::new(ttl, 0);
+        match map.remove_entry(&key) {
+            Some((
+                k,
+                StoreValue {
+                    value,
+                    expiration_time: Some(t),
+                },
+            )) if t <= now => 0,
+
+            None => 0,
+
+            Some((k, store_value)) => {
+                map.insert(
+                    k,
+                    StoreValue {
+                        expiration_time: Some(now + ttl_duration),
+                        ..store_value
+                    },
+                );
+                1
+            }
+        }
+    }
 }
 
 impl Clone for Store {
