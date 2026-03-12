@@ -37,30 +37,29 @@ impl Store {
 
     pub async fn set(&self, key: Vec<u8>, value: Vec<u8>) -> Option<Vec<u8>> {
         let mut map = self.inner.write().await;
-        match map.insert(
+        map.insert(
             key,
             StoreValue {
                 value: value.clone(),
                 expiration_time: None,
             },
-        ) {
-            None => None,
-            Some(StoreValue {
-                value: v,
-                expiration_time: _,
-            }) => Some(v.to_vec()),
-        }
+        )
+        .map(
+            |StoreValue {
+                 value: v,
+                 expiration_time: _,
+             }| v.to_vec(),
+        )
     }
 
     pub async fn del(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
         let mut map = self.inner.write().await;
-        match map.remove(key) {
-            None => None,
-            Some(StoreValue {
-                value: v,
-                expiration_time: _,
-            }) => Some(v.to_vec()),
-        }
+        map.remove(key).map(
+            |StoreValue {
+                 value: v,
+                 expiration_time: _,
+             }| v.to_vec(),
+        )
     }
 }
 
