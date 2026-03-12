@@ -7,6 +7,7 @@ pub enum Command {
     GET { key: Vec<u8> },
     SET { key: Vec<u8>, value: Vec<u8> },
     DEL { key: Vec<u8> },
+    EXPIRE { key: Vec<u8>, value: u64 },
     QUIT,
     NOOP,
 }
@@ -65,6 +66,24 @@ impl TryFrom<&Frame> for Command {
                 command: "DEL".to_string(),
                 given: args.len() - 1,
                 expected: 1,
+            }),
+            [cmd, key, value] if cmd.eq_ignore_ascii_case(b"expire") => {
+                match String::from_utf8(value.to_vec())
+                    .map_err(|_| Error::WrongArgumentType)
+                    .and_then(|v| v.parse::<u64>().map_err(|_| Error::WrongArgumentType))
+                {
+                    Ok(v) => Ok(Command::EXPIRE {
+                        key: key.to_vec(),
+                        value: v,
+                    }),
+                    Err(e) => Err(e),
+                }
+            }
+
+            [cmd, ..] if cmd.eq_ignore_ascii_case(b"expire") => Err(Error::WrongArity {
+                command: "EXPIRE".to_string(),
+                given: args.len() - 1,
+                expected: 2,
             }),
 
             [..] => Err(Error::UnknownCommand),
@@ -145,12 +164,35 @@ mod tests {
     }
 
     #[test]
+    fn expire_command_parses() {
+        let frame = Frame::Array(Some(vec![
+            bulk(b"EXPIRE"),
+            bulk(b"mykey"),
+            bulk(b"123"),
+        ]));
+
+        let command = Command::try_from(frame).unwrap();
+        assert_eq!(
+            command,
+            Command::EXPIRE {
+                key: b"mykey".to_vec(),
+                value: 123,
+            }
+        );
+    }
+
+    #[test]
     fn command_name_is_case_insensitive() {
         let ping = Frame::Array(Some(vec![bulk(b"pInG")]));
         let quit = Frame::Array(Some(vec![bulk(b"qUiT")]));
         let get = Frame::Array(Some(vec![bulk(b"gEt"), bulk(b"mykey")]));
         let set = Frame::Array(Some(vec![bulk(b"SeT"), bulk(b"mykey"), bulk(b"myvalue")]));
         let del = Frame::Array(Some(vec![bulk(b"dEl"), bulk(b"mykey")]));
+        let expire = Frame::Array(Some(vec![
+            bulk(b"eXpIrE"),
+            bulk(b"mykey"),
+            bulk(b"60"),
+        ]));
 
         assert_eq!(Command::try_from(ping).unwrap(), Command::PING);
         assert_eq!(Command::try_from(quit).unwrap(), Command::QUIT);
@@ -171,6 +213,13 @@ mod tests {
             Command::try_from(del).unwrap(),
             Command::DEL {
                 key: b"mykey".to_vec()
+            }
+        );
+        assert_eq!(
+            Command::try_from(expire).unwrap(),
+            Command::EXPIRE {
+                key: b"mykey".to_vec(),
+                value: 60,
             }
         );
     }
@@ -361,6 +410,67 @@ mod tests {
                 given: 2,
                 expected: 1,
             }) if command == "DEL"
+        ));
+    }
+
+    #[test]
+    fn expire_with_missing_ttl_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![bulk(b"EXPIRE"), bulk(b"key")]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 1,
+                expected: 2,
+            }) if command == "EXPIRE"
+        ));
+    }
+
+    #[test]
+    fn expire_with_extra_args_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![
+            bulk(b"EXPIRE"),
+            bulk(b"key"),
+            bulk(b"60"),
+            bulk(b"extra"),
+        ]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 3,
+                expected: 2,
+            }) if command == "EXPIRE"
+        ));
+    }
+
+    #[test]
+    fn expire_with_non_numeric_ttl_returns_wrong_argument_type() {
+        let frame = Frame::Array(Some(vec![
+            bulk(b"EXPIRE"),
+            bulk(b"key"),
+            bulk(b"not-a-number"),
+        ]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArgumentType)
+        ));
+    }
+
+    #[test]
+    fn expire_with_non_utf8_ttl_returns_wrong_argument_type() {
+        let frame = Frame::Array(Some(vec![
+            bulk(b"EXPIRE"),
+            bulk(b"key"),
+            Frame::Bulk(Some(vec![0xff, 0xfe])),
+        ]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArgumentType)
         ));
     }
 }
