@@ -1,10 +1,16 @@
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 
+type Key = Vec<u8>;
+type ExpirationEntry = Reverse<(Instant, Key)>;
+type ExpirationHeap = BinaryHeap<ExpirationEntry>;
+
 pub struct Store {
-    inner: Arc<RwLock<HashMap<Vec<u8>, StoreValue>>>,
+    hashmap: Arc<RwLock<HashMap<Vec<u8>, StoreValue>>>,
+    expiration_heap: Arc<RwLock<ExpirationHeap>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -19,12 +25,33 @@ impl Store {
     }
     pub fn new() -> Store {
         Store {
-            inner: Arc::new(RwLock::new(HashMap::new())),
+            hashmap: Arc::new(RwLock::new(HashMap::new())),
+            expiration_heap: Arc::new(RwLock::new(BinaryHeap::new())),
         }
     }
 
-    pub async fn get(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
-        let map = self.inner.read().await;
+    async fn sweep_expired_once(&self) -> () {
+        let mut heap = self.expiration_heap.write().await;
+        let mut candidates = HashSet::new();
+        let now = Instant::now();
+
+        while let Some(Reverse((when, key))) = heap.peek()
+            && when <= &now
+        {
+            candidates.insert(key.clone());
+            heap.pop();
+        }
+
+        for key in candidates {
+            if self.get(&key.to_vec()).await.is_none() {
+                let mut map = self.hashmap.write().await;
+                map.remove(&key);
+            }
+        }
+    }
+
+    pub async fn get(&self, key: &Key) -> Option<Vec<u8>> {
+        let map = self.hashmap.read().await;
         let now = Instant::now();
         match map.get(key) {
             None => None,
@@ -36,8 +63,8 @@ impl Store {
         }
     }
 
-    pub async fn set(&self, key: Vec<u8>, value: Vec<u8>) -> Option<Vec<u8>> {
-        let mut map = self.inner.write().await;
+    pub async fn set(&self, key: Key, value: Vec<u8>) -> Option<Vec<u8>> {
+        let mut map = self.hashmap.write().await;
         map.insert(
             key,
             StoreValue {
@@ -53,9 +80,9 @@ impl Store {
         )
     }
 
-    pub async fn del(&self, key: &Vec<u8>) -> Option<Vec<u8>> {
+    pub async fn del(&self, key: &Key) -> Option<Vec<u8>> {
         let now = Instant::now();
-        let mut map = self.inner.write().await;
+        let mut map = self.hashmap.write().await;
         match map.remove(key) {
             Some(v) if self.is_expired(&v, now) => None,
 
@@ -65,8 +92,8 @@ impl Store {
         }
     }
 
-    pub async fn expire(&self, key: Vec<u8>, ttl: u64) -> u64 {
-        let mut map = self.inner.write().await;
+    pub async fn expire(&self, key: Key, ttl: u64) -> u64 {
+        let mut map = self.hashmap.write().await;
         let now = Instant::now();
         let ttl_duration = Duration::new(ttl, 0);
         match map.remove_entry(&key) {
@@ -87,8 +114,8 @@ impl Store {
         }
     }
 
-    pub async fn ttl(&self, key: Vec<u8>) -> i64 {
-        let map = self.inner.read().await;
+    pub async fn ttl(&self, key: Key) -> i64 {
+        let map = self.hashmap.read().await;
         let now = Instant::now();
         match map.get(key.as_slice()) {
             None => -2,
@@ -108,7 +135,8 @@ impl Store {
 impl Clone for Store {
     fn clone(&self) -> Self {
         Store {
-            inner: self.inner.clone(),
+            hashmap: self.hashmap.clone(),
+            expiration_heap: self.expiration_heap.clone(),
         }
     }
 }
@@ -267,7 +295,7 @@ mod tests {
         sleep(Duration::from_millis(1)).await;
 
         let tick1 = store.ttl(key.clone()).await;
-        sleep(Duration::from_secs(5)).await;
+        sleep(Duration::from_secs(1)).await;
         let tick2 = store.ttl(key).await;
 
         assert!(tick1 > tick2);
