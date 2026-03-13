@@ -9,6 +9,7 @@ pub enum Command {
     SET { key: Vec<u8>, value: Vec<u8> },
     DEL { key: Vec<u8> },
     EXPIRE { key: Vec<u8>, value: u64 },
+    TTL { key: Vec<u8> },
     QUIT,
     NOOP,
 }
@@ -90,6 +91,13 @@ fn parse_expire(argv: &[&[u8]]) -> Result<Command, Error> {
     }
 }
 
+fn parse_ttl(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key] => Ok(Command::TTL { key: key.to_vec() }),
+        _ => Err(wrong_arity("TTL", argv.len(), 1)),
+    }
+}
+
 impl TryFrom<&Frame> for Command {
     type Error = Error;
 
@@ -114,6 +122,9 @@ impl TryFrom<&Frame> for Command {
         }
         if cmd.eq_ignore_ascii_case(b"expire") {
             return parse_expire(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"ttl") {
+            return parse_ttl(argv);
         }
 
         Err(Error::UnknownCommand)
@@ -207,6 +218,19 @@ mod tests {
     }
 
     #[test]
+    fn ttl_command_parses() {
+        let frame = Frame::Array(Some(vec![bulk(b"TTL"), bulk(b"mykey")]));
+
+        let command = Command::try_from(frame).unwrap();
+        assert_eq!(
+            command,
+            Command::TTL {
+                key: b"mykey".to_vec()
+            }
+        );
+    }
+
+    #[test]
     fn command_name_is_case_insensitive() {
         let ping = Frame::Array(Some(vec![bulk(b"pInG")]));
         let quit = Frame::Array(Some(vec![bulk(b"qUiT")]));
@@ -214,6 +238,7 @@ mod tests {
         let set = Frame::Array(Some(vec![bulk(b"SeT"), bulk(b"mykey"), bulk(b"myvalue")]));
         let del = Frame::Array(Some(vec![bulk(b"dEl"), bulk(b"mykey")]));
         let expire = Frame::Array(Some(vec![bulk(b"eXpIrE"), bulk(b"mykey"), bulk(b"60")]));
+        let ttl = Frame::Array(Some(vec![bulk(b"TtL"), bulk(b"mykey")]));
 
         assert_eq!(Command::try_from(ping).unwrap(), Command::PING);
         assert_eq!(Command::try_from(quit).unwrap(), Command::QUIT);
@@ -241,6 +266,12 @@ mod tests {
             Command::EXPIRE {
                 key: b"mykey".to_vec(),
                 value: 60,
+            }
+        );
+        assert_eq!(
+            Command::try_from(ttl).unwrap(),
+            Command::TTL {
+                key: b"mykey".to_vec()
             }
         );
     }
@@ -492,6 +523,34 @@ mod tests {
         assert!(matches!(
             Command::try_from(frame),
             Err(Error::WrongArgumentType)
+        ));
+    }
+
+    #[test]
+    fn ttl_with_missing_key_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![bulk(b"TTL")]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 0,
+                expected: 1,
+            }) if command == "TTL"
+        ));
+    }
+
+    #[test]
+    fn ttl_with_extra_args_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![bulk(b"TTL"), bulk(b"key"), bulk(b"extra")]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 2,
+                expected: 1,
+            }) if command == "TTL"
         ));
     }
 }

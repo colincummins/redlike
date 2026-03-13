@@ -65,7 +65,7 @@ impl Store {
         }
     }
 
-    pub async fn expire(&self, key: Vec<u8>, ttl: u64) -> u8 {
+    pub async fn expire(&self, key: Vec<u8>, ttl: u64) -> u64 {
         let mut map = self.inner.write().await;
         let now = Instant::now();
         let ttl_duration = Duration::new(ttl, 0);
@@ -267,7 +267,7 @@ mod tests {
         sleep(Duration::from_millis(1)).await;
 
         let tick1 = store.ttl(key.clone()).await;
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(5)).await;
         let tick2 = store.ttl(key).await;
 
         assert!(tick1 > tick2);

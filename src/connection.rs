@@ -48,8 +48,11 @@ where
                 let deleted = self.store.del(&key).await.map(|_| 1).unwrap_or(0);
                 ProcessOutcome::Respond(Frame::Integer(deleted.into()))
             }
-            Command::EXPIRE { key: _, value: _ } => {
-                todo!();
+            Command::EXPIRE { key, value } => {
+                ProcessOutcome::Respond(Frame::Integer(self.store.expire(key, value).await as i64))
+            }
+            Command::TTL { key } => {
+                ProcessOutcome::Respond(Frame::Integer(self.store.ttl(key).await as i64))
             }
         }
     }
@@ -218,6 +221,139 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expire_existing_key_returns_one() {
+        let mut conn = setup_dummy_connection();
+        let _ = conn
+            .process_command(Command::SET {
+                key: "mykey".into(),
+                value: "myvalue".into(),
+            })
+            .await;
+        let response = conn
+            .process_command(Command::EXPIRE {
+                key: "mykey".into(),
+                value: 60,
+            })
+            .await;
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Integer(1)))
+    }
+
+    #[tokio::test]
+    async fn expire_missing_key_returns_zero() {
+        let mut conn = setup_dummy_connection();
+        let response = conn
+            .process_command(Command::EXPIRE {
+                key: "mykey".into(),
+                value: 60,
+            })
+            .await;
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Integer(0)))
+    }
+
+    #[tokio::test]
+    async fn expire_expired_key_returns_zero() {
+        let mut conn = setup_dummy_connection();
+        let _ = conn
+            .process_command(Command::SET {
+                key: "mykey".into(),
+                value: "myvalue".into(),
+            })
+            .await;
+        let _ = conn
+            .process_command(Command::EXPIRE {
+                key: "mykey".into(),
+                value: 0,
+            })
+            .await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+        let response = conn
+            .process_command(Command::EXPIRE {
+                key: "mykey".into(),
+                value: 60,
+            })
+            .await;
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Integer(0)))
+    }
+
+    #[tokio::test]
+    async fn ttl_missing_key_returns_neg2() {
+        let mut conn = setup_dummy_connection();
+        let response = conn
+            .process_command(Command::TTL {
+                key: "mykey".into(),
+            })
+            .await;
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Integer(-2)))
+    }
+
+    #[tokio::test]
+    async fn ttl_key_without_expiration_returns_neg1() {
+        let mut conn = setup_dummy_connection();
+        let _ = conn
+            .process_command(Command::SET {
+                key: "mykey".into(),
+                value: "myvalue".into(),
+            })
+            .await;
+        let response = conn
+            .process_command(Command::TTL {
+                key: "mykey".into(),
+            })
+            .await;
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Integer(-1)))
+    }
+
+    #[tokio::test]
+    async fn ttl_existing_key_with_expiration_returns_positive_value() {
+        let mut conn = setup_dummy_connection();
+        let _ = conn
+            .process_command(Command::SET {
+                key: "mykey".into(),
+                value: "myvalue".into(),
+            })
+            .await;
+        let _ = conn
+            .process_command(Command::EXPIRE {
+                key: "mykey".into(),
+                value: 60,
+            })
+            .await;
+        let response = conn
+            .process_command(Command::TTL {
+                key: "mykey".into(),
+            })
+            .await;
+        assert!(matches!(
+            response,
+            ProcessOutcome::Respond(Frame::Integer(ttl)) if ttl > 0
+        ));
+    }
+
+    #[tokio::test]
+    async fn ttl_expired_key_returns_neg2() {
+        let mut conn = setup_dummy_connection();
+        let _ = conn
+            .process_command(Command::SET {
+                key: "mykey".into(),
+                value: "myvalue".into(),
+            })
+            .await;
+        let _ = conn
+            .process_command(Command::EXPIRE {
+                key: "mykey".into(),
+                value: 0,
+            })
+            .await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+        let response = conn
+            .process_command(Command::TTL {
+                key: "mykey".into(),
+            })
+            .await;
+        assert_eq!(response, ProcessOutcome::Respond(Frame::Integer(-2)))
+    }
+
+    #[tokio::test]
     async fn send_response() {
         let (client, server) = tokio::io::duplex(64);
         let mut client_reader = BufReader::new(client);
@@ -275,6 +411,76 @@ mod tests {
                 call: b"*2\r\n$3\r\nDEL\r\n$5\r\nmykey\r\n",
                 response: b":0\r\n",
                 expected: "Should return 0 if DEL called on a key with no value",
+            },
+            TestCase {
+                call: b"*3\r\n$3\r\nSET\r\n$5\r\nexkey\r\n$5\r\nvalue\r\n",
+                response: b"+OK\r\n",
+                expected: "Should set exkey before expiring it",
+            },
+            TestCase {
+                call: b"*3\r\n$6\r\nEXPIRE\r\n$5\r\nexkey\r\n$2\r\n60\r\n",
+                response: b":1\r\n",
+                expected: "Should return 1 if EXPIRE called on an existing key",
+            },
+            TestCase {
+                call: b"*3\r\n$6\r\nEXPIRE\r\n$11\r\nmissing-key\r\n$2\r\n60\r\n",
+                response: b":0\r\n",
+                expected: "Should return 0 if EXPIRE called on a missing key",
+            },
+            TestCase {
+                call: b"*3\r\n$3\r\nSET\r\n$10\r\nexpiredkey\r\n$5\r\nvalue\r\n",
+                response: b"+OK\r\n",
+                expected: "Should set expiredkey before expiring it immediately",
+            },
+            TestCase {
+                call: b"*3\r\n$6\r\nEXPIRE\r\n$10\r\nexpiredkey\r\n$1\r\n0\r\n",
+                response: b":1\r\n",
+                expected: "Should return 1 when setting an immediate expiration",
+            },
+            TestCase {
+                call: b"*3\r\n$6\r\nEXPIRE\r\n$10\r\nexpiredkey\r\n$2\r\n60\r\n",
+                response: b":0\r\n",
+                expected: "Should return 0 if EXPIRE called on an expired key",
+            },
+            TestCase {
+                call: b"*2\r\n$3\r\nTTL\r\n$11\r\nmissing-key\r\n",
+                response: b":-2\r\n",
+                expected: "Missing keys should return -2 for TTL",
+            },
+            TestCase {
+                call: b"*3\r\n$3\r\nSET\r\n$8\r\nttl-live\r\n$5\r\nvalue\r\n",
+                response: b"+OK\r\n",
+                expected: "Should set ttl-live before reading TTL without expiration",
+            },
+            TestCase {
+                call: b"*2\r\n$3\r\nTTL\r\n$8\r\nttl-live\r\n",
+                response: b":-1\r\n",
+                expected: "Keys without expiration should return -1 for TTL",
+            },
+            TestCase {
+                call: b"*3\r\n$3\r\nSET\r\n$12\r\nttl-expiring\r\n$5\r\nvalue\r\n",
+                response: b"+OK\r\n",
+                expected: "Should set ttl-expiring before reading positive TTL",
+            },
+            TestCase {
+                call: b"*3\r\n$6\r\nEXPIRE\r\n$12\r\nttl-expiring\r\n$2\r\n60\r\n",
+                response: b":1\r\n",
+                expected: "Should add expiration before reading positive TTL",
+            },
+            TestCase {
+                call: b"*3\r\n$3\r\nSET\r\n$11\r\nttl-expired\r\n$5\r\nvalue\r\n",
+                response: b"+OK\r\n",
+                expected: "Should set ttl-expired before expiring it immediately",
+            },
+            TestCase {
+                call: b"*3\r\n$6\r\nEXPIRE\r\n$11\r\nttl-expired\r\n$1\r\n0\r\n",
+                response: b":1\r\n",
+                expected: "Should expire ttl-expired immediately",
+            },
+            TestCase {
+                call: b"*2\r\n$3\r\nTTL\r\n$11\r\nttl-expired\r\n",
+                response: b":-2\r\n",
+                expected: "Expired keys should return -2 for TTL",
             },
             TestCase {
                 call: b"*1\r\n$3\r\nFOO\r\n",
