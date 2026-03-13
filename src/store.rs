@@ -86,6 +86,23 @@ impl Store {
             }
         }
     }
+
+    pub async fn ttl(&self, key: Vec<u8>) -> i64 {
+        let map = self.inner.read().await;
+        let now = Instant::now();
+        match map.get(key.as_slice()) {
+            None => -2,
+            Some(v) if self.is_expired(v, now) => -2,
+            Some(StoreValue {
+                value: _,
+                expiration_time: None,
+            }) => -1,
+            Some(StoreValue {
+                value: _,
+                expiration_time: Some(expires_on),
+            }) => expires_on.duration_since(now).as_secs() as i64,
+        }
+    }
 }
 
 impl Clone for Store {
@@ -189,5 +206,70 @@ mod tests {
         sleep(Duration::from_millis(1)).await;
 
         assert_eq!(0, store.expire(key, 60).await);
+    }
+
+    #[tokio::test]
+    async fn ttl_returns_neg2_for_missing_key() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+
+        assert_eq!(-2, store.ttl(key).await);
+    }
+
+    #[tokio::test]
+    async fn ttl_returns_neg2_for_expired_key() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+
+        store.set(key.clone(), b"value".to_vec()).await;
+
+        store.expire(key.clone(), 0).await;
+
+        sleep(Duration::from_millis(1)).await;
+
+        assert_eq!(-2, store.ttl(key).await);
+    }
+
+    #[tokio::test]
+    async fn ttl_returns_neg1_for_key_w_no_expire_time() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+        let value = b"ttl-value".to_vec();
+
+        store.set(key.clone(), value).await;
+
+        assert_eq!(-1, store.ttl(key).await);
+    }
+
+    #[tokio::test]
+    async fn ttl_returns_non_negative_secs_for_key_with_remaining_time() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+
+        store.set(key.clone(), b"value".to_vec()).await;
+
+        store.expire(key.clone(), 100).await;
+
+        sleep(Duration::from_millis(1)).await;
+
+        assert!(1 < store.ttl(key).await);
+    }
+
+    #[tokio::test]
+    async fn ttl_decreases_as_time_passes() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+
+        store.set(key.clone(), b"value".to_vec()).await;
+
+        store.expire(key.clone(), 100).await;
+
+        sleep(Duration::from_millis(1)).await;
+
+        let tick1 = store.ttl(key.clone()).await;
+        sleep(Duration::from_secs(1)).await;
+        let tick2 = store.ttl(key).await;
+
+        assert!(tick1 > tick2);
     }
 }
