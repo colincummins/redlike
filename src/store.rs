@@ -1,6 +1,5 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::ops::Add;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
@@ -99,6 +98,7 @@ impl Store {
     }
 
     pub async fn expire(&self, key: Key, ttl: u64) -> u64 {
+        let mut heap = self.expiration_heap.write().await;
         let mut map = self.hashmap.write().await;
         let now = Instant::now();
         let ttl_duration = Duration::new(ttl, 0);
@@ -116,7 +116,6 @@ impl Store {
                         ..store_value
                     },
                 );
-                let mut heap = self.expiration_heap.write().await;
                 heap.push(Reverse((expires, k)));
                 1
             }
@@ -308,5 +307,29 @@ mod tests {
         let tick2 = store.ttl(key).await;
 
         assert!(tick1 > tick2);
+    }
+
+    #[tokio::test]
+    async fn sweep_once_clears_all_expired_keys() {
+        let store = Store::new();
+        for i in 0..10 {
+            let key: Vec<u8> = u8::to_le_bytes(i).to_vec();
+            store.set(key.clone(), b"value".to_vec()).await;
+            store.expire(key, 0).await;
+        }
+        let persistent_key = b"persistent_key".to_vec();
+        store
+            .set(persistent_key.clone(), b"this key should remain".to_vec())
+            .await;
+        sleep(Duration::from_millis(1)).await;
+        store.sweep_expired_once().await;
+        let map = store.hashmap.read().await;
+        for i in 0..10 {
+            let key: Vec<u8> = u8::to_le_bytes(i).to_vec();
+            assert!(!map.contains_key(&key))
+        }
+        assert!(map.contains_key(&persistent_key));
+        let heap = store.expiration_heap.read().await;
+        assert_eq!(0, heap.len())
     }
 }
