@@ -42,12 +42,13 @@ impl Store {
             heap.pop();
         }
 
+        drop(heap);
+
+        let mut map = self.hashmap.write().await;
         for key in candidates {
-            if self.get(&key.to_vec()).await.is_none() {
-                let mut map = self.hashmap.write().await;
-                map.remove(&key);
-            }
+            match map.get(&key).await {}
         }
+        drop(map);
     }
 
     pub async fn get(&self, key: &Key) -> Option<Vec<u8>> {
