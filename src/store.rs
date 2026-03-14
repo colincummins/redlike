@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::ops::Add;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
@@ -46,7 +47,11 @@ impl Store {
 
         let mut map = self.hashmap.write().await;
         for key in candidates {
-            match map.get(&key).await {}
+            if let Some(v) = map.get(&key)
+                && self.is_expired(v, now)
+            {
+                map.remove_entry(&key);
+            }
         }
         drop(map);
     }
@@ -103,13 +108,16 @@ impl Store {
             None => 0,
 
             Some((k, store_value)) => {
+                let expires = now + ttl_duration;
                 map.insert(
-                    k,
+                    k.clone(),
                     StoreValue {
-                        expiration_time: Some(now + ttl_duration),
+                        expiration_time: Some(expires),
                         ..store_value
                     },
                 );
+                let mut heap = self.expiration_heap.write().await;
+                heap.push(Reverse((expires, k)));
                 1
             }
         }
