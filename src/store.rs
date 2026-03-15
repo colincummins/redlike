@@ -1,8 +1,9 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::time::{Duration, Instant};
+use tokio::spawn;
+use tokio::sync::{Notify, RwLock};
+use tokio::time::{Duration, Instant, sleep_until};
 
 type Key = Vec<u8>;
 type ExpirationEntry = Reverse<(Instant, Key)>;
@@ -11,9 +12,10 @@ type ExpirationHeap = BinaryHeap<ExpirationEntry>;
 pub struct Store {
     hashmap: Arc<RwLock<HashMap<Vec<u8>, StoreValue>>>,
     expiration_heap: Arc<RwLock<ExpirationHeap>>,
+    wakeup: Arc<Notify>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 struct StoreValue {
     value: Vec<u8>,
     expiration_time: Option<Instant>,
@@ -24,9 +26,29 @@ impl Store {
         matches!(value.expiration_time, Some(t) if t <= now)
     }
     pub fn new() -> Store {
-        Store {
+        let new_store = Store {
             hashmap: Arc::new(RwLock::new(HashMap::new())),
             expiration_heap: Arc::new(RwLock::new(BinaryHeap::new())),
+            wakeup: Arc::new(Notify::new()),
+        };
+        let sweep_store = new_store.clone();
+        spawn(async move {
+            sweep_store.sweep_loop().await;
+        });
+        new_store
+    }
+
+    async fn sweep_loop(&self) -> () {
+        loop {
+            self.sweep_expired_once().await;
+            let next_expire = {
+                let heap = self.expiration_heap.read().await;
+                heap.peek().map(|Reverse((wake_time, _))| *wake_time)
+            };
+            match next_expire {
+                None => self.wakeup.notified().await,
+                Some(wake_time) => sleep_until(wake_time).await,
+            }
         }
     }
 
@@ -117,6 +139,7 @@ impl Store {
                     },
                 );
                 heap.push(Reverse((expires, k)));
+                self.wakeup.notify_one();
                 1
             }
         }
@@ -145,6 +168,7 @@ impl Clone for Store {
         Store {
             hashmap: self.hashmap.clone(),
             expiration_heap: self.expiration_heap.clone(),
+            wakeup: self.wakeup.clone(),
         }
     }
 }
@@ -309,6 +333,49 @@ mod tests {
         assert!(tick1 > tick2);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn setting_an_existing_key_with_ttl_clears_the_ttl() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+        let replacement_value = b"new-value".to_vec();
+
+        store.set(key.clone(), b"value".to_vec()).await;
+        assert_eq!(1, store.expire(key.clone(), 60).await);
+        assert_eq!(
+            Some(b"value".to_vec()),
+            store.set(key.clone(), replacement_value.clone()).await
+        );
+
+        tokio::time::advance(Duration::from_secs(60)).await;
+        store.sweep_expired_once().await;
+
+        assert_eq!(Some(replacement_value), store.get(&key).await);
+        assert_eq!(store.ttl(key).await, -1)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stale_heap_entry_does_not_delete_reexpired_key() {
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+        let value = b"value".to_vec();
+
+        store.set(key.clone(), value.clone()).await;
+        assert_eq!(1, store.expire(key.clone(), 5).await);
+        assert_eq!(1, store.expire(key.clone(), 10).await);
+
+        tokio::time::advance(Duration::from_secs(5)).await;
+        store.sweep_expired_once().await;
+
+        assert_eq!(Some(value.clone()), store.get(&key).await);
+        assert!(store.ttl(key.clone()).await > 0);
+
+        tokio::time::advance(Duration::from_secs(5)).await;
+        store.sweep_expired_once().await;
+
+        assert_eq!(None, store.get(&key).await);
+        assert_eq!(-2, store.ttl(key).await);
+    }
+
     #[tokio::test]
     async fn sweep_once_clears_all_expired_keys() {
         let store = Store::new();
@@ -323,6 +390,28 @@ mod tests {
             .await;
         sleep(Duration::from_millis(1)).await;
         store.sweep_expired_once().await;
+        let map = store.hashmap.read().await;
+        for i in 0..10 {
+            let key: Vec<u8> = u8::to_le_bytes(i).to_vec();
+            assert!(!map.contains_key(&key))
+        }
+        assert!(map.contains_key(&persistent_key));
+        let heap = store.expiration_heap.read().await;
+        assert_eq!(0, heap.len())
+    }
+    #[tokio::test]
+    async fn sweep_loop_clears_all_expired_keys() {
+        let store = Store::new();
+        for i in 0..10 {
+            let key: Vec<u8> = u8::to_le_bytes(i).to_vec();
+            store.set(key.clone(), b"value".to_vec()).await;
+            store.expire(key, 0).await;
+        }
+        let persistent_key = b"persistent_key".to_vec();
+        store
+            .set(persistent_key.clone(), b"this key should remain".to_vec())
+            .await;
+        sleep(Duration::from_millis(1)).await;
         let map = store.hashmap.read().await;
         for i in 0..10 {
             let key: Vec<u8> = u8::to_le_bytes(i).to_vec();
