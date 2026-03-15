@@ -47,7 +47,10 @@ impl Store {
             };
             match next_expire {
                 None => self.wakeup.notified().await,
-                Some(wake_time) => sleep_until(wake_time).await,
+                Some(wake_time) => tokio::select! {
+                    _ = sleep_until(wake_time) => {}
+                    _ = self.wakeup.notified() => {}
+                },
             }
         }
     }
