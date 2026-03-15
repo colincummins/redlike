@@ -80,6 +80,7 @@ impl Store {
         drop(map);
     }
 
+    /// Returns the value for `key`, or `None` if the key is missing or expired.
     pub async fn get(&self, key: &Key) -> Option<Vec<u8>> {
         let map = self.hashmap.read().await;
         let now = Instant::now();
@@ -93,6 +94,9 @@ impl Store {
         }
     }
 
+    /// Sets `key` to `value`, returning the previous value if one existed.
+    ///
+    /// Any existing expiration on the key is cleared.
     pub async fn set(&self, key: Key, value: Vec<u8>) -> Option<Vec<u8>> {
         let mut map = self.hashmap.write().await;
         map.insert(
@@ -110,6 +114,9 @@ impl Store {
         )
     }
 
+    /// Deletes `key`, returning the stored value if it existed and was not expired.
+    ///
+    /// Expired keys are treated as absent.
     pub async fn del(&self, key: &Key) -> Option<Vec<u8>> {
         let now = Instant::now();
         let mut map = self.hashmap.write().await;
@@ -122,6 +129,10 @@ impl Store {
         }
     }
 
+    /// Sets a timeout in seconds on `key`.
+    ///
+    /// Returns `1` if the timeout was set, or `0` if the key does not exist
+    /// or is already expired.
     pub async fn expire(&self, key: Key, ttl: u64) -> u64 {
         let mut heap = self.expiration_heap.write().await;
         let mut map = self.hashmap.write().await;
@@ -148,6 +159,12 @@ impl Store {
         }
     }
 
+    /// Returns the remaining time to live for `key` in whole seconds.
+    ///
+    /// Returns:
+    /// - `-2` if the key does not exist or is expired
+    /// - `-1` if the key exists but has no expiration
+    /// - a non-negative number for the remaining TTL
     pub async fn ttl(&self, key: Key) -> i64 {
         let map = self.hashmap.read().await;
         let now = Instant::now();
@@ -185,6 +202,7 @@ impl Default for Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::Barrier;
     use tokio::time::sleep;
 
     #[tokio::test]
@@ -423,5 +441,96 @@ mod tests {
         assert!(map.contains_key(&persistent_key));
         let heap = store.expiration_heap.read().await;
         assert_eq!(0, heap.len())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_expires() {
+        let barrier = Arc::new(Barrier::new(3));
+
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+        store.set(key.clone(), b"my_val".to_vec()).await;
+
+        let task_a = {
+            let store = store.clone();
+            let key = key.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store.expire(key, 5).await
+            })
+        };
+
+        let task_b = {
+            let store = store.clone();
+            let key = key.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store.expire(key, 10).await
+            })
+        };
+
+        barrier.wait().await;
+        let a = task_a.await.unwrap();
+        let b = task_b.await.unwrap();
+
+        assert_eq!(1, a);
+        assert_eq!(1, b);
+
+        tokio::time::advance(Duration::from_secs(5)).await;
+        store.sweep_expired_once().await;
+
+        let after_five = store.get(&key).await;
+
+        tokio::time::advance(Duration::from_secs(5)).await;
+        store.sweep_expired_once().await;
+
+        let after_ten = store.get(&key).await;
+
+        assert!(after_five.is_none() || after_ten.is_none());
+        assert_eq!(None, after_ten)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_del_vs_ttl() {
+        let barrier = Arc::new(Barrier::new(3));
+
+        let store = Store::new();
+        let key = b"ttl-key".to_vec();
+        store.set(key.clone(), b"my_val".to_vec()).await;
+
+        let task_a = {
+            let store = store.clone();
+            let key = key.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store.expire(key, 0).await
+            })
+        };
+
+        let task_b = {
+            let store = store.clone();
+            let key = key.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                store.del(&key).await
+            })
+        };
+
+        barrier.wait().await;
+
+        let a = task_a.await.unwrap();
+        let b = task_b.await.unwrap();
+
+        assert!(a == 0 || a == 1);
+        assert!(b == Some(b"my_val".to_vec()) || b.is_none());
+
+        store.sweep_expired_once().await;
+
+        assert_eq!(None, store.get(&key).await);
+        assert_eq!(-2, store.ttl(key).await);
     }
 }
