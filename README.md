@@ -1,6 +1,11 @@
 # redlike
 Redlike is a concurrent, in-memory key-value store that communicates with clients over TCP using RESP, with optional inline terminal-style commands.
 
+Implemented commands include `PING`, `GET`, `SET`, `DEL`, `EXPIRE`, `TTL`, and `QUIT`.
+Expired keys are treated as missing on reads, and a background sweeper removes expired entries from the store.
+
+The project is covered by unit tests, including deterministic Tokio paused-time tests for expiration and TTL behavior.
+
 # API Specification
 
 ## Transport
