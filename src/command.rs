@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::frame::Frame;
+use std::str;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Command {
@@ -7,68 +8,126 @@ pub enum Command {
     GET { key: Vec<u8> },
     SET { key: Vec<u8>, value: Vec<u8> },
     DEL { key: Vec<u8> },
+    EXPIRE { key: Vec<u8>, value: u64 },
+    TTL { key: Vec<u8> },
     QUIT,
     NOOP,
+}
+
+fn bulk_args(value: &Frame) -> Result<Vec<&[u8]>, Error> {
+    let args = match value {
+        Frame::Array(Some(inner)) if !inner.is_empty() => inner,
+        _ => return Err(Error::InvalidCommandFrame),
+    };
+
+    args.iter()
+        .map(|arg| match arg {
+            Frame::Bulk(Some(inner)) => Ok(inner.as_slice()),
+            _ => Err(Error::InvalidCommandFrame),
+        })
+        .collect()
+}
+
+fn wrong_arity(command: &str, given: usize, expected: usize) -> Error {
+    Error::WrongArity {
+        command: command.to_string(),
+        given,
+        expected,
+    }
+}
+
+fn parse_ping(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [] => Ok(Command::PING),
+        _ => Err(wrong_arity("PING", argv.len(), 0)),
+    }
+}
+
+fn parse_quit(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [] => Ok(Command::QUIT),
+        _ => Err(wrong_arity("QUIT", argv.len(), 0)),
+    }
+}
+
+fn parse_get(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key] => Ok(Command::GET { key: key.to_vec() }),
+        _ => Err(wrong_arity("GET", argv.len(), 1)),
+    }
+}
+
+fn parse_set(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key, value] => Ok(Command::SET {
+            key: key.to_vec(),
+            value: value.to_vec(),
+        }),
+        _ => Err(wrong_arity("SET", argv.len(), 2)),
+    }
+}
+
+fn parse_del(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key] => Ok(Command::DEL { key: key.to_vec() }),
+        _ => Err(wrong_arity("DEL", argv.len(), 1)),
+    }
+}
+
+fn parse_u64_arg(value: &[u8]) -> Result<u64, Error> {
+    str::from_utf8(value)
+        .map_err(|_| Error::WrongArgumentType)?
+        .parse::<u64>()
+        .map_err(|_| Error::WrongArgumentType)
+}
+
+fn parse_expire(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key, value] => Ok(Command::EXPIRE {
+            key: key.to_vec(),
+            value: parse_u64_arg(value)?,
+        }),
+        _ => Err(wrong_arity("EXPIRE", argv.len(), 2)),
+    }
+}
+
+fn parse_ttl(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key] => Ok(Command::TTL { key: key.to_vec() }),
+        _ => Err(wrong_arity("TTL", argv.len(), 1)),
+    }
 }
 
 impl TryFrom<&Frame> for Command {
     type Error = Error;
 
     fn try_from(value: &Frame) -> Result<Self, Self::Error> {
-        let args = match value {
-            Frame::Array(Some(inner)) if !inner.is_empty() => inner,
-            _ => return Err(Error::InvalidCommandFrame),
-        };
+        let args = bulk_args(value)?;
+        let (cmd, argv) = args.split_first().ok_or(Error::InvalidCommandFrame)?;
 
-        let args: Vec<&[u8]> = args
-            .iter()
-            .map(|a| match a {
-                Frame::Bulk(Some(i)) => Ok(i.as_slice()),
-                _ => Err(Error::InvalidCommandFrame),
-            })
-            .collect::<Result<_, _>>()?;
-
-        match args.as_slice() {
-            [cmd] if cmd.eq_ignore_ascii_case(b"ping") => Ok(Command::PING),
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"ping") => Err(Error::WrongArity {
-                command: "PING".to_string(),
-                given: args.len() - 1,
-                expected: 0,
-            }),
-            [cmd] if cmd.eq_ignore_ascii_case(b"quit") => Ok(Command::QUIT),
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"quit") => Err(Error::WrongArity {
-                command: "QUIT".to_string(),
-                given: args.len() - 1,
-                expected: 0,
-            }),
-            [cmd, key] if cmd.eq_ignore_ascii_case(b"get") => {
-                Ok(Command::GET { key: key.to_vec() })
-            }
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"get") => Err(Error::WrongArity {
-                command: "GET".to_string(),
-                given: args.len() - 1,
-                expected: 1,
-            }),
-            [cmd, key, value] if cmd.eq_ignore_ascii_case(b"set") => Ok(Command::SET {
-                key: key.to_vec(),
-                value: value.to_vec(),
-            }),
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"set") => Err(Error::WrongArity {
-                command: "SET".to_string(),
-                given: args.len() - 1,
-                expected: 2,
-            }),
-            [cmd, key] if cmd.eq_ignore_ascii_case(b"del") => {
-                Ok(Command::DEL { key: key.to_vec() })
-            }
-            [cmd, ..] if cmd.eq_ignore_ascii_case(b"del") => Err(Error::WrongArity {
-                command: "DEL".to_string(),
-                given: args.len() - 1,
-                expected: 1,
-            }),
-
-            [..] => Err(Error::UnknownCommand),
+        if cmd.eq_ignore_ascii_case(b"ping") {
+            return parse_ping(argv);
         }
+        if cmd.eq_ignore_ascii_case(b"quit") {
+            return parse_quit(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"get") {
+            return parse_get(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"set") {
+            return parse_set(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"del") {
+            return parse_del(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"expire") {
+            return parse_expire(argv);
+        }
+        if cmd.eq_ignore_ascii_case(b"ttl") {
+            return parse_ttl(argv);
+        }
+
+        Err(Error::UnknownCommand)
     }
 }
 
@@ -145,12 +204,41 @@ mod tests {
     }
 
     #[test]
+    fn expire_command_parses() {
+        let frame = Frame::Array(Some(vec![bulk(b"EXPIRE"), bulk(b"mykey"), bulk(b"123")]));
+
+        let command = Command::try_from(frame).unwrap();
+        assert_eq!(
+            command,
+            Command::EXPIRE {
+                key: b"mykey".to_vec(),
+                value: 123,
+            }
+        );
+    }
+
+    #[test]
+    fn ttl_command_parses() {
+        let frame = Frame::Array(Some(vec![bulk(b"TTL"), bulk(b"mykey")]));
+
+        let command = Command::try_from(frame).unwrap();
+        assert_eq!(
+            command,
+            Command::TTL {
+                key: b"mykey".to_vec()
+            }
+        );
+    }
+
+    #[test]
     fn command_name_is_case_insensitive() {
         let ping = Frame::Array(Some(vec![bulk(b"pInG")]));
         let quit = Frame::Array(Some(vec![bulk(b"qUiT")]));
         let get = Frame::Array(Some(vec![bulk(b"gEt"), bulk(b"mykey")]));
         let set = Frame::Array(Some(vec![bulk(b"SeT"), bulk(b"mykey"), bulk(b"myvalue")]));
         let del = Frame::Array(Some(vec![bulk(b"dEl"), bulk(b"mykey")]));
+        let expire = Frame::Array(Some(vec![bulk(b"eXpIrE"), bulk(b"mykey"), bulk(b"60")]));
+        let ttl = Frame::Array(Some(vec![bulk(b"TtL"), bulk(b"mykey")]));
 
         assert_eq!(Command::try_from(ping).unwrap(), Command::PING);
         assert_eq!(Command::try_from(quit).unwrap(), Command::QUIT);
@@ -170,6 +258,19 @@ mod tests {
         assert_eq!(
             Command::try_from(del).unwrap(),
             Command::DEL {
+                key: b"mykey".to_vec()
+            }
+        );
+        assert_eq!(
+            Command::try_from(expire).unwrap(),
+            Command::EXPIRE {
+                key: b"mykey".to_vec(),
+                value: 60,
+            }
+        );
+        assert_eq!(
+            Command::try_from(ttl).unwrap(),
+            Command::TTL {
                 key: b"mykey".to_vec()
             }
         );
@@ -361,6 +462,95 @@ mod tests {
                 given: 2,
                 expected: 1,
             }) if command == "DEL"
+        ));
+    }
+
+    #[test]
+    fn expire_with_missing_ttl_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![bulk(b"EXPIRE"), bulk(b"key")]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 1,
+                expected: 2,
+            }) if command == "EXPIRE"
+        ));
+    }
+
+    #[test]
+    fn expire_with_extra_args_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![
+            bulk(b"EXPIRE"),
+            bulk(b"key"),
+            bulk(b"60"),
+            bulk(b"extra"),
+        ]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 3,
+                expected: 2,
+            }) if command == "EXPIRE"
+        ));
+    }
+
+    #[test]
+    fn expire_with_non_numeric_ttl_returns_wrong_argument_type() {
+        let frame = Frame::Array(Some(vec![
+            bulk(b"EXPIRE"),
+            bulk(b"key"),
+            bulk(b"not-a-number"),
+        ]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArgumentType)
+        ));
+    }
+
+    #[test]
+    fn expire_with_non_utf8_ttl_returns_wrong_argument_type() {
+        let frame = Frame::Array(Some(vec![
+            bulk(b"EXPIRE"),
+            bulk(b"key"),
+            Frame::Bulk(Some(vec![0xff, 0xfe])),
+        ]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArgumentType)
+        ));
+    }
+
+    #[test]
+    fn ttl_with_missing_key_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![bulk(b"TTL")]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 0,
+                expected: 1,
+            }) if command == "TTL"
+        ));
+    }
+
+    #[test]
+    fn ttl_with_extra_args_returns_wrong_arity() {
+        let frame = Frame::Array(Some(vec![bulk(b"TTL"), bulk(b"key"), bulk(b"extra")]));
+
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: 2,
+                expected: 1,
+            }) if command == "TTL"
         ));
     }
 }

@@ -10,6 +10,7 @@ pub enum Error {
     },
     UnknownCommand,
     InvalidCommandFrame,
+    WrongArgumentType,
 }
 impl From<tokio::io::Error> for Error {
     fn from(value: tokio::io::Error) -> crate::error::Error {

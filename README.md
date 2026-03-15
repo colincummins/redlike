@@ -1,6 +1,11 @@
 # redlike
 Redlike is a concurrent, in-memory key-value store that communicates with clients over TCP using RESP, with optional inline terminal-style commands.
 
+Implemented commands include `PING`, `GET`, `SET`, `DEL`, `EXPIRE`, `TTL`, and `QUIT`.
+Expired keys are treated as missing on reads, and a background sweeper removes expired entries from the store.
+
+The project is covered by unit tests, including deterministic Tokio paused-time tests for expiration and TTL behavior.
+
 # API Specification
 
 ## Transport
@@ -41,6 +46,8 @@ Examples:
 *1\r\n$4\r\nPING\r\n
 *2\r\n$3\r\nGET\r\n$5\r\nmykey\r\n
 *3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n
+*3\r\n$6\r\nEXPIRE\r\n$5\r\nmykey\r\n$2\r\n60\r\n
+*2\r\n$3\r\nTTL\r\n$5\r\nmykey\r\n
 ```
 
 ### Inline
@@ -55,6 +62,8 @@ Examples:
 PING\n
 GET mykey\n
 SET mykey myvalue\n
+EXPIRE mykey 60\n
+TTL mykey\n
 ```
 
 Blank inline lines are ignored.
@@ -105,6 +114,8 @@ Response when key does not exist:
 $-1\r\n
 ```
 
+Expired keys are treated as missing.
+
 ---
 
 ### `SET key value`
@@ -142,6 +153,62 @@ Response when key did not exist:
 ```text
 :0\r\n
 ```
+
+Expired keys are treated as missing.
+
+---
+
+### `EXPIRE key seconds`
+
+Request:
+
+```text
+*3\r\n$6\r\nEXPIRE\r\n$5\r\nmykey\r\n$2\r\n60\r\n
+```
+
+Response when the timeout was set:
+
+```text
+:1\r\n
+```
+
+Response when the key does not exist or is already expired:
+
+```text
+:0\r\n
+```
+
+The timeout is specified in whole seconds. A timeout of `0` makes the key expire immediately.
+
+---
+
+### `TTL key`
+
+Request:
+
+```text
+*2\r\n$3\r\nTTL\r\n$5\r\nmykey\r\n
+```
+
+Response when the key has an expiration:
+
+```text
+:<seconds>\r\n
+```
+
+Response when the key exists but has no expiration:
+
+```text
+:-1\r\n
+```
+
+Response when the key does not exist or is already expired:
+
+```text
+:-2\r\n
+```
+
+Returned TTL values are whole seconds.
 
 ---
 
@@ -189,6 +256,12 @@ If the input stream becomes malformed at the protocol level, the parser enters a
 
 > GET language\n
 < $4\r\nrust\r\n
+
+> EXPIRE language 60\n
+< :1\r\n
+
+> TTL language\n
+< :60\r\n
 
 > DEL language\n
 < :1\r\n
