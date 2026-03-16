@@ -54,7 +54,7 @@ async fn e2e_sequential() -> tokio::io::Result<()> {
         },
     ];
 
-    let (mut client, handle) = setup_test_server_and_test_client(ADDR).await?;
+    let (mut client, handle, _shutdown) = setup_test_server_and_test_client(ADDR).await?;
 
     for TestCase {
         call,
@@ -128,7 +128,7 @@ async fn e2e_inline_terminal_requests() -> tokio::io::Result<()> {
         },
     ];
 
-    let (mut client, handle) = setup_test_server_and_test_client(ADDR).await?;
+    let (mut client, handle, _shutdown) = setup_test_server_and_test_client(ADDR).await?;
 
     for TestCase {
         call,
@@ -154,7 +154,7 @@ async fn e2e_inline_terminal_requests() -> tokio::io::Result<()> {
 
 #[tokio::test]
 async fn e2e_blank_line_gets_no_response() -> tokio::io::Result<()> {
-    let (mut client, handle) = setup_test_server_and_test_client(ADDR).await?;
+    let (mut client, handle, _shutdown) = setup_test_server_and_test_client(ADDR).await?;
 
     client.write(b"\n").await?;
     client.write(b"*1\r\n$4\r\nPING\r\n").await?;

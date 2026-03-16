@@ -3,6 +3,7 @@ use common::test_client::TestClient;
 use redlike::frame::Frame;
 use redlike::server::run_server;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 const ADDR: &str = "127.0.0.1:0";
 
 async fn test_all_commands(addr: std::net::SocketAddr) -> tokio::io::Result<()> {
@@ -44,7 +45,8 @@ async fn test_all_commands(addr: std::net::SocketAddr) -> tokio::io::Result<()> 
 
 #[tokio::test]
 async fn get_set_del_same_record() -> tokio::io::Result<()> {
-    let (addr, handle) = run_server(ADDR).await?;
+    let shutdown = CancellationToken::new();
+    let (addr, handle) = run_server(ADDR, shutdown).await?;
 
     let mut client_handles = JoinSet::new();
 

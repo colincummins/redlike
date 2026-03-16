@@ -6,12 +6,12 @@ const ADDR: &str = "127.0.0.1:6379";
 #[tokio::main]
 #[allow(unused_variables)]
 async fn main() -> Result<(), std::io::Error> {
-    let shutdown = CancellationToken::new();
-    let (_address, handle) = run_server(ADDR).await?;
+    let shutdown_token = CancellationToken::new();
+    let (_address, handle) = run_server(ADDR, shutdown_token.clone()).await?;
 
     match signal::ctrl_c().await {
         Ok(()) => {
-            shutdown.cancel();
+            shutdown_token.cancel();
             Ok(())
         }
         Err(e) => Err(e),

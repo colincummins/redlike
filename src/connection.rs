@@ -5,11 +5,13 @@ use crate::frame::Frame;
 use crate::parser::{ParseResult, Parser};
 use crate::store::Store;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio_util::sync::CancellationToken;
 
 pub struct Connection<R, W> {
     reader: BufReader<R>,
     writer: BufWriter<W>,
     store: Store,
+    shutdown_token: CancellationToken,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -24,11 +26,12 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    pub fn new(reader: R, writer: W, store: Store) -> Self {
+    pub fn new(reader: R, writer: W, store: Store, shutdown_token: CancellationToken) -> Self {
         Connection {
             reader: BufReader::new(reader),
             writer: BufWriter::new(writer),
             store,
+            shutdown_token,
         }
     }
 
@@ -120,9 +123,13 @@ mod tests {
 
     use super::*;
 
+    fn dummy_shutdown_token() -> CancellationToken {
+        CancellationToken::new()
+    }
+
     fn setup_dummy_connection() -> Connection<tokio::io::Empty, Sink> {
         let store: Store = Store::new();
-        Connection::new(tokio::io::empty(), sink(), store)
+        Connection::new(tokio::io::empty(), sink(), store, dummy_shutdown_token())
     }
 
     #[tokio::test]
@@ -358,7 +365,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(64);
         let mut client_reader = BufReader::new(client);
         let store = Store::new();
-        let mut conn = Connection::new(tokio::io::empty(), server, store);
+        let mut conn = Connection::new(tokio::io::empty(), server, store, dummy_shutdown_token());
         conn.send_response(Frame::SimpleString("OK".into()))
             .await
             .unwrap();
@@ -502,7 +509,7 @@ mod tests {
         let (client, server) = tokio::io::duplex(128);
         let (reader, writer) = split(server);
         let store = Store::new();
-        let mut conn = Connection::new(reader, writer, store);
+        let mut conn = Connection::new(reader, writer, store, dummy_shutdown_token());
 
         let (reader, writer) = split(client);
 
