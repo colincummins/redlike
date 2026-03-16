@@ -5,6 +5,7 @@ use crate::frame::Frame;
 use crate::parser::{ParseResult, Parser};
 use crate::store::Store;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 pub struct Connection<R, W> {
@@ -73,7 +74,10 @@ where
         let mut buf = Vec::<u8>::new();
         loop {
             buf.clear();
-            self.reader.read_buf(&mut buf).await?;
+            select! {
+                read_result = self.reader.read_buf(&mut buf) => {read_result?;},
+                _ = self.shutdown_token.cancelled() => {break;}
+            }
             if buf.is_empty() {
                 return Ok(());
             }
@@ -114,6 +118,7 @@ where
                 return Ok(());
             }
         }
+        Ok(())
     }
 }
 

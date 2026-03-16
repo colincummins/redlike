@@ -1,11 +1,13 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use crate::connection::Connection;
 use crate::store::Store;
 use tokio::io::Result;
 use tokio::net::TcpListener;
-use tokio::select;
 use tokio::task::{JoinHandle, JoinSet};
+use tokio::time::timeout;
+use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 pub async fn server_from_listener(
@@ -43,9 +45,30 @@ pub async fn server_from_listener(
                     println!("connection task failed: {:?}", err);
                 }
             },
-            _ = shutdown_token.cancelled() => {break Ok(());}
+            _ = shutdown_token.cancelled() => {break;}
         }
     }
+
+    let shutdown_result = timeout(Duration::from_secs(3), async {
+        while let Some(join_result) = open_connections.join_next().await {
+            if let Err(err) = join_result {
+                println!("connection task failed: {:?}", err);
+            }
+        }
+    })
+    .await;
+
+    if shutdown_result.is_err() {
+        open_connections.abort_all();
+
+        while let Some(join_result) = open_connections.join_next().await {
+            if let Err(err) = join_result {
+                println!("connection task failed: {:?}", err);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn run_server(
