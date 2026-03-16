@@ -22,7 +22,10 @@ async fn e2e_partial_success_then_close() -> tokio::io::Result<()> {
     let (mut client, handle) = setup_test_server_and_test_client(ADDR).await?;
 
     client.write(b"*1\r\n$4\r\nPING\r\n$-2\r\n").await?;
-    assert_eq!(client.read_frame().await?, Frame::SimpleString("PONG".into()));
+    assert_eq!(
+        client.read_frame().await?,
+        Frame::SimpleString("PONG".into())
+    );
     assert_connection_closed(&mut client).await;
 
     handle.abort();
@@ -62,7 +65,10 @@ async fn e2e_unknown_command_does_not_close_connection() -> tokio::io::Result<()
     );
 
     client.write(b"*1\r\n$4\r\nPING\r\n").await?;
-    assert_eq!(client.read_frame().await?, Frame::SimpleString("PONG".into()));
+    assert_eq!(
+        client.read_frame().await?,
+        Frame::SimpleString("PONG".into())
+    );
 
     client.send_quit().await?;
     handle.abort();
@@ -80,7 +86,10 @@ async fn e2e_wrong_arity_does_not_close_connection() -> tokio::io::Result<()> {
     );
 
     client.write(b"*1\r\n$4\r\nPING\r\n").await?;
-    assert_eq!(client.read_frame().await?, Frame::SimpleString("PONG".into()));
+    assert_eq!(
+        client.read_frame().await?,
+        Frame::SimpleString("PONG".into())
+    );
 
     client.send_quit().await?;
     handle.abort();
@@ -95,8 +104,14 @@ async fn e2e_multiple_frames_in_one_write() -> tokio::io::Result<()> {
         .write(b"*1\r\n$4\r\nPING\r\n*1\r\n$4\r\nPING\r\n")
         .await?;
 
-    assert_eq!(client.read_frame().await?, Frame::SimpleString("PONG".into()));
-    assert_eq!(client.read_frame().await?, Frame::SimpleString("PONG".into()));
+    assert_eq!(
+        client.read_frame().await?,
+        Frame::SimpleString("PONG".into())
+    );
+    assert_eq!(
+        client.read_frame().await?,
+        Frame::SimpleString("PONG".into())
+    );
 
     client.send_quit().await?;
     handle.abort();
@@ -108,7 +123,10 @@ async fn e2e_inline_and_resp_can_be_mixed() -> tokio::io::Result<()> {
     let (mut client, handle) = setup_test_server_and_test_client(ADDR).await?;
 
     client.write(b"PING\n").await?;
-    assert_eq!(client.read_frame().await?, Frame::SimpleString("PONG".into()));
+    assert_eq!(
+        client.read_frame().await?,
+        Frame::SimpleString("PONG".into())
+    );
 
     client
         .write(b"*3\r\n$3\r\nSET\r\n$5\r\nmixed\r\n$5\r\nvalue\r\n")

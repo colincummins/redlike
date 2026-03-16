@@ -302,7 +302,10 @@ mod tests {
         fn parse_empty_simple_string() {
             let mut p = Parser::new();
             let buf = b"+\r\n";
-            assert_eq!(p.parse(buf), complete(vec![Frame::SimpleString("".to_string())]))
+            assert_eq!(
+                p.parse(buf),
+                complete(vec![Frame::SimpleString("".to_string())])
+            )
         }
 
         #[test]
@@ -331,7 +334,10 @@ mod tests {
         fn parse_empty_simple_error() {
             let mut p = Parser::new();
             let buf = b"-\r\n";
-            assert_eq!(p.parse(buf), complete(vec![Frame::SimpleError("".to_string())]))
+            assert_eq!(
+                p.parse(buf),
+                complete(vec![Frame::SimpleError("".to_string())])
+            )
         }
 
         #[test]
@@ -441,7 +447,10 @@ mod tests {
         fn proper_payload_parsed_leaving_remaining_buffer() {
             let mut p = Parser::new();
             let buf = b"$5\r\nhello\r\nleftovers";
-            assert_eq!(p.parse(buf), complete(vec![Frame::Bulk(Some(b"hello".to_vec()))]));
+            assert_eq!(
+                p.parse(buf),
+                complete(vec![Frame::Bulk(Some(b"hello".to_vec()))])
+            );
             assert_eq!(p.buf, b"leftovers")
         }
 
@@ -706,7 +715,9 @@ mod tests {
             assert_eq!(
                 p.parse(buf),
                 partial(
-                    vec![Frame::Array(Some(vec![Frame::Bulk(Some(b"PING".to_vec()))]))],
+                    vec![Frame::Array(Some(vec![Frame::Bulk(Some(
+                        b"PING".to_vec()
+                    ))]))],
                     ParseError::InvalidLength
                 )
             );
