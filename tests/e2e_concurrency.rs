@@ -11,7 +11,10 @@ async fn test_all_commands(addr: std::net::SocketAddr) -> tokio::io::Result<()> 
     for i in 0..10 {
         client.write(b"*1\r\n$4\r\nPING\r\n").await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(i * 10)).await;
-        assert_eq!(client.read_frame().await?, Frame::SimpleString("PONG".into()));
+        assert_eq!(
+            client.read_frame().await?,
+            Frame::SimpleString("PONG".into())
+        );
         client
             .write(b"*3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n")
             .await?;
@@ -20,10 +23,12 @@ async fn test_all_commands(addr: std::net::SocketAddr) -> tokio::io::Result<()> 
         client.write(b"*2\r\n$3\r\nGET\r\n$5\r\nmykey\r\n").await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(i * 10)).await;
         let get_response = client.read_frame().await?;
-        assert!(matches!(
-            get_response,
-            Frame::Bulk(Some(ref bytes)) if bytes == b"myvalue"
-        ) || matches!(get_response, Frame::Bulk(None)));
+        assert!(
+            matches!(
+                get_response,
+                Frame::Bulk(Some(ref bytes)) if bytes == b"myvalue"
+            ) || matches!(get_response, Frame::Bulk(None))
+        );
         client.write(b"*2\r\n$3\r\nDEL\r\n$5\r\nmykey\r\n").await?;
         tokio::time::sleep(tokio::time::Duration::from_millis(i * 10)).await;
         assert!(matches!(

@@ -158,7 +158,10 @@ async fn e2e_blank_line_gets_no_response() -> tokio::io::Result<()> {
 
     client.write(b"\n").await?;
     client.write(b"*1\r\n$4\r\nPING\r\n").await?;
-    assert_eq!(Frame::SimpleString("PONG".into()), client.read_frame().await?);
+    assert_eq!(
+        Frame::SimpleString("PONG".into()),
+        client.read_frame().await?
+    );
     client.send_quit().await?;
     handle.abort();
     Ok(())
