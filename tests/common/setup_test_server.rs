@@ -1,16 +1,15 @@
-use super::test_client::TestClient;
 use redlike::server::server_from_listener;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-pub async fn setup_test_server_and_test_client(
+pub async fn setup_test_server(
     listener_address: &str,
 )
     -> Result<
         (
-            TestClient,
+            SocketAddr,
             JoinHandle<Result<(), tokio::io::Error>>,
             CancellationToken,
         ),
@@ -18,8 +17,8 @@ pub async fn setup_test_server_and_test_client(
     >
 {
     let shutdown_token = CancellationToken::new();
-    let listener = TcpListener::bind(listener_address).await.unwrap();
-    let addr: SocketAddr = listener.local_addr().unwrap();
+    let listener = TcpListener::bind(listener_address).await?;
+    let addr: SocketAddr = listener.local_addr()?;
     let handle = tokio::spawn(server_from_listener(listener, shutdown_token.clone()));
-    Ok((TestClient::new(addr).await?, handle, shutdown_token))
+    Ok((addr, handle, shutdown_token))
 }
