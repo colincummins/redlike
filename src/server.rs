@@ -5,9 +5,9 @@ use crate::connection::Connection;
 use crate::store::Store;
 use tokio::io::Result;
 use tokio::net::TcpListener;
+use tokio::select;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
-use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 pub async fn server_from_listener(
@@ -48,6 +48,9 @@ pub async fn server_from_listener(
             _ = shutdown_token.cancelled() => {break;}
         }
     }
+
+    // Stop accepting new clients while waiting for open connections to drain
+    drop(listener);
 
     let shutdown_result = timeout(Duration::from_secs(3), async {
         while let Some(join_result) = open_connections.join_next().await {
