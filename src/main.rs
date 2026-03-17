@@ -9,11 +9,9 @@ async fn main() -> Result<(), std::io::Error> {
     let shutdown_token = CancellationToken::new();
     let (_address, handle) = run_server(ADDR, shutdown_token.clone()).await?;
 
-    match signal::ctrl_c().await {
-        Ok(()) => {
-            shutdown_token.cancel();
-            Ok(())
-        }
-        Err(e) => Err(e),
-    }
+    signal::ctrl_c().await?;
+    shutdown_token.cancel();
+    handle.await.map_err(std::io::Error::other)??;
+
+    Ok(())
 }
