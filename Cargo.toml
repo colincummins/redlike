@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 memchr = "2.8.0"
+tokio-util = "0.7.18"
 
 
 [dev-dependencies]
