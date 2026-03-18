@@ -1,7 +1,7 @@
 mod common;
 use common::setup_test_server::setup_test_server;
-use common::test_client::TestClient;
 use common::test_case::TestCase;
+use common::test_client::TestClient;
 use redlike::frame::Frame;
 const ADDR: &str = "127.0.0.1:0";
 

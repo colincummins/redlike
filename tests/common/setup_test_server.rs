@@ -6,16 +6,14 @@ use tokio_util::sync::CancellationToken;
 
 pub async fn setup_test_server(
     listener_address: &str,
-)
-    -> Result<
-        (
-            SocketAddr,
-            JoinHandle<Result<(), tokio::io::Error>>,
-            CancellationToken,
-        ),
-        tokio::io::Error,
-    >
-{
+) -> Result<
+    (
+        SocketAddr,
+        JoinHandle<Result<(), tokio::io::Error>>,
+        CancellationToken,
+    ),
+    tokio::io::Error,
+> {
     let shutdown_token = CancellationToken::new();
     let listener = TcpListener::bind(listener_address).await?;
     let addr: SocketAddr = listener.local_addr()?;
