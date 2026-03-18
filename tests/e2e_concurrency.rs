@@ -55,7 +55,7 @@ async fn get_set_del_same_record() -> tokio::io::Result<()> {
     }
 
     while let Some(res) = client_handles.join_next().await {
-        res??;
+        res.expect("Client panicked")?;
     }
 
     handle.abort();
