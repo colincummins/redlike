@@ -56,7 +56,7 @@ where
                 ProcessOutcome::Respond(Frame::Integer(self.store.expire(key, value).await as i64))
             }
             Command::TTL { key } => {
-                ProcessOutcome::Respond(Frame::Integer(self.store.ttl(key).await as i64))
+                ProcessOutcome::Respond(Frame::Integer(self.store.ttl(key).await))
             }
         }
     }
