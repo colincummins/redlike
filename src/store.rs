@@ -1,9 +1,13 @@
+use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::spawn;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::{Duration, Instant, sleep_until};
+
+use crate::store;
 
 type Key = Vec<u8>;
 type ExpirationEntry = Reverse<(Instant, Key)>;
@@ -19,6 +23,13 @@ pub struct Store {
 struct StoreValue {
     value: Vec<u8>,
     expiration_time: Option<Instant>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct SnapshotValue {
+    #[serde(with = "serde_bytes")]
+    value: Vec<u8>,
+    expiration_time_unix: Option<u64>,
 }
 
 impl Store {
@@ -196,6 +207,48 @@ impl Clone for Store {
 impl Default for Store {
     fn default() -> Self {
         Store::new()
+    }
+}
+
+impl From<StoreValue> for SnapshotValue {
+    fn from(store_value: StoreValue) -> Self {
+        let StoreValue {
+            value,
+            expiration_time,
+        } = store_value;
+        let unix_now_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time before UNIX epoch")
+            .as_secs();
+        let store_now = Instant::now();
+        Self {
+            value,
+            expiration_time_unix: expiration_time
+                .map(|t| t.duration_since(store_now).as_secs() + unix_now_seconds),
+        }
+    }
+}
+
+impl From<SnapshotValue> for StoreValue {
+    fn from(snapshot_value: SnapshotValue) -> Self {
+        let SnapshotValue {
+            value,
+            expiration_time_unix,
+        } = snapshot_value;
+        let unix_now_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time before UNIX epoch")
+            .as_secs();
+        let store_now = Instant::now();
+        Self {
+            value,
+            expiration_time: expiration_time_unix.map(|t| {
+                let remaining = t.saturating_sub(unix_now_seconds);
+                store_now
+                    .checked_add(Duration::from_secs(remaining))
+                    .expect("Unable to calculate expiration time")
+            }),
+        }
     }
 }
 
@@ -532,5 +585,77 @@ mod tests {
 
         assert_eq!(None, store.get(&key).await);
         assert_eq!(-2, store.ttl(key).await);
+    }
+
+    #[test]
+    fn snapshot_from_store_value_preserves_value_and_none_expiration() {
+        let store_value = StoreValue {
+            value: b"snapshot-value".to_vec(),
+            expiration_time: None,
+        };
+
+        let snapshot_value: SnapshotValue = store_value.into();
+
+        assert_eq!(snapshot_value.value, b"snapshot-value".to_vec());
+        assert_eq!(snapshot_value.expiration_time_unix, None);
+    }
+
+    #[test]
+    fn store_value_from_snapshot_preserves_value_and_none_expiration() {
+        let snapshot_value = SnapshotValue {
+            value: b"snapshot-value".to_vec(),
+            expiration_time_unix: None,
+        };
+
+        let store_value: StoreValue = snapshot_value.into();
+
+        assert_eq!(store_value.value, b"snapshot-value".to_vec());
+        assert_eq!(store_value.expiration_time, None);
+    }
+
+    #[test]
+    fn snapshot_from_store_value_converts_future_expiration_to_unix_time() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time before UNIX epoch")
+            .as_secs();
+        let store_value = StoreValue {
+            value: b"snapshot-value".to_vec(),
+            expiration_time: Some(Instant::now() + Duration::from_secs(5)),
+        };
+
+        let snapshot_value: SnapshotValue = store_value.into();
+
+        let expiration_time_unix = snapshot_value
+            .expiration_time_unix
+            .expect("Expected expiration time");
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time before UNIX epoch")
+            .as_secs();
+
+        assert!(((before + 4)..=(after + 5)).contains(&expiration_time_unix));
+    }
+
+    #[test]
+    fn store_value_from_snapshot_converts_future_unix_time_to_instant() {
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time before UNIX epoch")
+            .as_secs();
+        let snapshot_value = SnapshotValue {
+            value: b"snapshot-value".to_vec(),
+            expiration_time_unix: Some(now_unix + 5),
+        };
+        let before = Instant::now();
+
+        let store_value: StoreValue = snapshot_value.into();
+
+        let after = Instant::now();
+        let expiration_time = store_value.expiration_time.expect("Expected expiration time");
+
+        assert_eq!(store_value.value, b"snapshot-value".to_vec());
+        assert!(expiration_time >= before + Duration::from_secs(4));
+        assert!(expiration_time <= after + Duration::from_secs(5));
     }
 }
