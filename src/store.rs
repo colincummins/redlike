@@ -7,35 +7,18 @@ use tokio::spawn;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::{Duration, Instant, sleep_until};
 
-use crate::store;
-
 type Key = Vec<u8>;
 type ExpirationEntry = Reverse<(Instant, Key)>;
 type ExpirationHeap = BinaryHeap<ExpirationEntry>;
 
+#[derive(Clone)]
 pub struct Store {
     hashmap: Arc<RwLock<HashMap<Vec<u8>, StoreValue>>>,
     expiration_heap: Arc<RwLock<ExpirationHeap>>,
     wakeup: Arc<Notify>,
 }
 
-#[derive(Debug, Clone)]
-struct StoreValue {
-    value: Vec<u8>,
-    expiration_time: Option<Instant>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct SnapshotValue {
-    #[serde(with = "serde_bytes")]
-    value: Vec<u8>,
-    expiration_time_unix: Option<u64>,
-}
-
 impl Store {
-    fn is_expired(&self, value: &StoreValue, now: Instant) -> bool {
-        matches!(value.expiration_time, Some(t) if t <= now)
-    }
     pub fn new() -> Store {
         let new_store = Store {
             hashmap: Arc::new(RwLock::new(HashMap::new())),
@@ -192,15 +175,9 @@ impl Store {
             }) => expires_on.duration_since(now).as_secs() as i64,
         }
     }
-}
 
-impl Clone for Store {
-    fn clone(&self) -> Self {
-        Store {
-            hashmap: self.hashmap.clone(),
-            expiration_heap: self.expiration_heap.clone(),
-            wakeup: self.wakeup.clone(),
-        }
+    fn is_expired(&self, value: &StoreValue, now: Instant) -> bool {
+        matches!(value.expiration_time, Some(t) if t <= now)
     }
 }
 
@@ -208,6 +185,19 @@ impl Default for Store {
     fn default() -> Self {
         Store::new()
     }
+}
+
+#[derive(Debug, Clone)]
+struct StoreValue {
+    value: Vec<u8>,
+    expiration_time: Option<Instant>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct SnapshotValue {
+    #[serde(with = "serde_bytes")]
+    value: Vec<u8>,
+    expiration_time_unix: Option<u64>,
 }
 
 impl From<StoreValue> for SnapshotValue {
@@ -652,7 +642,9 @@ mod tests {
         let store_value: StoreValue = snapshot_value.into();
 
         let after = Instant::now();
-        let expiration_time = store_value.expiration_time.expect("Expected expiration time");
+        let expiration_time = store_value
+            .expiration_time
+            .expect("Expected expiration time");
 
         assert_eq!(store_value.value, b"snapshot-value".to_vec());
         assert!(expiration_time >= before + Duration::from_secs(4));
