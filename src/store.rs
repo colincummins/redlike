@@ -1,3 +1,4 @@
+use serde::de::value;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -179,6 +180,23 @@ impl Store {
     fn is_expired(&self, value: &StoreValue, now: Instant) -> bool {
         matches!(value.expiration_time, Some(t) if t <= now)
     }
+
+    async fn to_snapshot(&self) -> Snapshot {
+        let now = Instant::now();
+        Snapshot {
+            entries: self
+                .hashmap
+                .read()
+                .await
+                .iter()
+                .filter(|(_, v)| !self.is_expired(v, now))
+                .map(|(key, value)| SnapshotEntry {
+                    key: key.clone(),
+                    value: value.into(),
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Default for Store {
@@ -212,6 +230,9 @@ struct Snapshot {
     entries: Vec<SnapshotEntry>,
 }
 
+#[derive(Debug)]
+struct SnapshotError;
+
 impl From<StoreValue> for SnapshotValue {
     fn from(store_value: StoreValue) -> Self {
         let StoreValue {
@@ -226,7 +247,26 @@ impl From<StoreValue> for SnapshotValue {
         Self {
             value,
             expiration_time_unix: expiration_time
-                .map(|t| t.duration_since(store_now).as_secs() + unix_now_seconds),
+                .map(|t| t.saturating_duration_since(store_now).as_secs() + unix_now_seconds),
+        }
+    }
+}
+
+impl From<&StoreValue> for SnapshotValue {
+    fn from(store_value: &StoreValue) -> Self {
+        let StoreValue {
+            value,
+            expiration_time,
+        } = store_value.clone();
+        let unix_now_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time before UNIX epoch")
+            .as_secs();
+        let store_now = Instant::now();
+        Self {
+            value,
+            expiration_time_unix: expiration_time
+                .map(|t| t.saturating_duration_since(store_now).as_secs() + unix_now_seconds),
         }
     }
 }
