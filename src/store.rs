@@ -737,4 +737,92 @@ mod tests {
         assert!(expiration_time >= before + Duration::from_secs(4));
         assert!(expiration_time <= after + Duration::from_secs(5));
     }
+
+    #[tokio::test]
+    async fn from_snapshot_restores_persistent_and_future_entries_only() {
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time before UNIX epoch")
+            .as_secs();
+        let snapshot = Snapshot {
+            entries: vec![
+                SnapshotEntry {
+                    key: b"persistent-key".to_vec(),
+                    value: SnapshotValue {
+                        value: b"persistent-value".to_vec(),
+                        expiration_time_unix: None,
+                    },
+                },
+                SnapshotEntry {
+                    key: b"future-key".to_vec(),
+                    value: SnapshotValue {
+                        value: b"future-value".to_vec(),
+                        expiration_time_unix: Some(now_unix + 60),
+                    },
+                },
+                SnapshotEntry {
+                    key: b"expired-key".to_vec(),
+                    value: SnapshotValue {
+                        value: b"expired-value".to_vec(),
+                        expiration_time_unix: Some(now_unix.saturating_sub(1)),
+                    },
+                },
+            ],
+        };
+
+        let store = Store::from_snapshot(snapshot).await;
+
+        assert_eq!(
+            Some(b"persistent-value".to_vec()),
+            store.get(&b"persistent-key".to_vec()).await
+        );
+        assert_eq!(
+            Some(b"future-value".to_vec()),
+            store.get(&b"future-key".to_vec()).await
+        );
+        assert_eq!(None, store.get(&b"expired-key".to_vec()).await);
+        assert_eq!(-1, store.ttl(b"persistent-key".to_vec()).await);
+
+        let future_ttl = store.ttl(b"future-key".to_vec()).await;
+        assert!((0..=60).contains(&future_ttl));
+        assert_eq!(-2, store.ttl(b"expired-key".to_vec()).await);
+    }
+
+    #[tokio::test]
+    async fn snapshot_round_trip_restores_live_entries() {
+        let store = Store::new();
+        let persistent_key = b"roundtrip-persistent".to_vec();
+        let expiring_key = b"roundtrip-expiring".to_vec();
+        let expired_key = b"roundtrip-expired".to_vec();
+
+        store
+            .set(persistent_key.clone(), b"persistent-value".to_vec())
+            .await;
+        store
+            .set(expiring_key.clone(), b"future-value".to_vec())
+            .await;
+        store
+            .set(expired_key.clone(), b"expired-value".to_vec())
+            .await;
+
+        assert_eq!(1, store.expire(expiring_key.clone(), 60).await);
+        assert_eq!(1, store.expire(expired_key.clone(), 0).await);
+
+        sleep(Duration::from_millis(1)).await;
+
+        let snapshot = store.to_snapshot().await;
+        let restored = Store::from_snapshot(snapshot).await;
+
+        assert_eq!(
+            Some(b"persistent-value".to_vec()),
+            restored.get(&persistent_key).await
+        );
+        assert_eq!(Some(b"future-value".to_vec()), restored.get(&expiring_key).await);
+        assert_eq!(None, restored.get(&expired_key).await);
+        assert_eq!(-1, restored.ttl(persistent_key).await);
+
+        let future_ttl = restored.ttl(expiring_key).await;
+        assert!((0..=60).contains(&future_ttl));
+        assert_eq!(-2, restored.ttl(expired_key).await);
+    }
 }
