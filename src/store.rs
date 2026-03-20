@@ -72,7 +72,7 @@ impl Store {
         let mut map = self.hashmap.write().await;
         for key in candidates {
             if let Some(v) = map.get(&key)
-                && self.is_expired(v, now)
+                && Store::is_expired(v, now)
             {
                 map.remove_entry(&key);
             }
@@ -86,7 +86,7 @@ impl Store {
         let now = Instant::now();
         match map.get(key) {
             None => None,
-            Some(v) if self.is_expired(v, now) => None,
+            Some(v) if Store::is_expired(v, now) => None,
             Some(StoreValue {
                 value: v,
                 expiration_time: _,
@@ -121,7 +121,7 @@ impl Store {
         let now = Instant::now();
         let mut map = self.hashmap.write().await;
         match map.remove(key) {
-            Some(v) if self.is_expired(&v, now) => None,
+            Some(v) if Store::is_expired(&v, now) => None,
 
             None => None,
 
@@ -139,7 +139,7 @@ impl Store {
         let now = Instant::now();
         let ttl_duration = Duration::new(ttl, 0);
         match map.remove_entry(&key) {
-            Some(v) if self.is_expired(&v.1, now) => 0,
+            Some(v) if Store::is_expired(&v.1, now) => 0,
 
             None => 0,
 
@@ -170,7 +170,7 @@ impl Store {
         let now = Instant::now();
         match map.get(key.as_slice()) {
             None => -2,
-            Some(v) if self.is_expired(v, now) => -2,
+            Some(v) if Store::is_expired(v, now) => -2,
             Some(StoreValue {
                 value: _,
                 expiration_time: None,
@@ -182,7 +182,7 @@ impl Store {
         }
     }
 
-    fn is_expired(&self, value: &StoreValue, now: Instant) -> bool {
+    fn is_expired(value: &StoreValue, now: Instant) -> bool {
         matches!(value.expiration_time, Some(t) if t <= now)
     }
 
@@ -194,13 +194,43 @@ impl Store {
                 .read()
                 .await
                 .iter()
-                .filter(|(_, v)| !self.is_expired(v, now))
+                .filter(|(_, v)| !Store::is_expired(v, now))
                 .map(|(key, value)| SnapshotEntry {
                     key: key.clone(),
                     value: value.into(),
                 })
                 .collect(),
         }
+    }
+
+    async fn from_snapshot(snapshot: Snapshot) -> Store {
+        let now_unix_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("System Time is set before Unix Epoch")
+            .as_secs();
+        let hashmap: HashMap<Vec<u8>, StoreValue> = snapshot
+            .entries
+            .into_iter()
+            .filter(|snapshot_entry| {
+                snapshot_entry.value.expiration_time_unix.is_none()
+                    || snapshot_entry.value.expiration_time_unix.unwrap() > now_unix_seconds
+            })
+            .map(|SnapshotEntry { key, value }| (key, value.into()))
+            .collect();
+        let expiration_heap: ExpirationHeap = hashmap
+            .iter()
+            .filter_map(|(key, store_value)| match store_value {
+                StoreValue {
+                    expiration_time: None,
+                    ..
+                } => None,
+                StoreValue {
+                    expiration_time: Some(expiration_instant),
+                    ..
+                } => Some(Reverse((*expiration_instant, key.clone()))),
+            })
+            .collect();
+        Store::from_parts(hashmap, expiration_heap)
     }
 }
 
@@ -246,7 +276,7 @@ impl From<StoreValue> for SnapshotValue {
         } = store_value;
         let unix_now_seconds = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("Time before UNIX epoch")
+            .expect("System Time is set before Unix Epoch")
             .as_secs();
         let store_now = Instant::now();
         Self {
