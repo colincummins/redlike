@@ -1,6 +1,5 @@
-use core::hash;
-use serde::de::value;
 use serde::{Deserialize, Serialize};
+use serde_json::{Deserializer, Serializer};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
@@ -231,6 +230,10 @@ impl Store {
             })
             .collect();
         Store::from_parts(hashmap, expiration_heap)
+    }
+
+    pub async fn dump(&self) -> Result<SnapshotError> {
+        serde::Serialize::serialize(&self, serializer)
     }
 }
 
@@ -817,7 +820,10 @@ mod tests {
             Some(b"persistent-value".to_vec()),
             restored.get(&persistent_key).await
         );
-        assert_eq!(Some(b"future-value".to_vec()), restored.get(&expiring_key).await);
+        assert_eq!(
+            Some(b"future-value".to_vec()),
+            restored.get(&expiring_key).await
+        );
         assert_eq!(None, restored.get(&expired_key).await);
         assert_eq!(-1, restored.ttl(persistent_key).await);
 
