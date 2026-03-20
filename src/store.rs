@@ -1,3 +1,4 @@
+use core::hash;
 use serde::de::value;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -21,9 +22,13 @@ pub struct Store {
 
 impl Store {
     pub fn new() -> Store {
+        Self::from_parts(HashMap::new(), ExpirationHeap::new())
+    }
+
+    fn from_parts(hashmap: HashMap<Vec<u8>, StoreValue>, expiration_heap: ExpirationHeap) -> Store {
         let new_store = Store {
-            hashmap: Arc::new(RwLock::new(HashMap::new())),
-            expiration_heap: Arc::new(RwLock::new(BinaryHeap::new())),
+            hashmap: Arc::new(RwLock::new(hashmap)),
+            expiration_heap: Arc::new(RwLock::new(expiration_heap)),
             wakeup: Arc::new(Notify::new()),
         };
         let sweep_store = new_store.clone();
