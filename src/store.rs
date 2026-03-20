@@ -200,6 +200,18 @@ struct SnapshotValue {
     expiration_time_unix: Option<u64>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct SnapshotEntry {
+    #[serde(with = "serde_bytes")]
+    key: Vec<u8>,
+    value: SnapshotValue,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Snapshot {
+    entries: Vec<SnapshotEntry>,
+}
+
 impl From<StoreValue> for SnapshotValue {
     fn from(store_value: StoreValue) -> Self {
         let StoreValue {
