@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Deserializer, Serializer};
+use serde_json::{Deserializer, Serializer, to_vec};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
@@ -232,8 +232,13 @@ impl Store {
         Store::from_parts(hashmap, expiration_heap)
     }
 
-    pub async fn dump(&self) -> Result<SnapshotError> {
-        serde::Serialize::serialize(&self, serializer)
+    pub async fn dump(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(&self.to_snapshot().await)
+    }
+
+    pub async fn restore(bytes: &[u8]) -> Result<Store, serde_json::Error> {
+        let snapshot: Snapshot = serde_json::from_slice(bytes).unwrap();
+        Ok(Store::from_snapshot(snapshot).await)
     }
 }
 
