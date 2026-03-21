@@ -376,14 +376,16 @@ impl TryFrom<SnapshotValue> for StoreValue {
         let store_now = Instant::now();
         Ok(Self {
             value,
-            expiration_time: expiration_time_unix.map(|t| -> Result<Instant, SnapshotError> {
-                let remaining = t.saturating_sub(unix_now_millis);
-                let remaining_millis =
-                    u64::try_from(remaining).map_err(|_| SnapshotError::DurationOverflow)?;
-                store_now
-                    .checked_add(Duration::from_millis(remaining_millis))
-                    .ok_or(SnapshotError::DurationOverflow)
-            }).transpose()?,
+            expiration_time: expiration_time_unix
+                .map(|t| -> Result<Instant, SnapshotError> {
+                    let remaining = t.saturating_sub(unix_now_millis);
+                    let remaining_millis =
+                        u64::try_from(remaining).map_err(|_| SnapshotError::DurationOverflow)?;
+                    store_now
+                        .checked_add(Duration::from_millis(remaining_millis))
+                        .ok_or(SnapshotError::DurationOverflow)
+                })
+                .transpose()?,
         })
     }
 }
