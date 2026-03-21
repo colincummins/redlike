@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Deserializer, Serializer, to_vec};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::fmt;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::spawn;
@@ -202,20 +202,24 @@ impl Store {
         }
     }
 
-    async fn from_snapshot(snapshot: Snapshot) -> Store {
-        let now_unix_seconds = SystemTime::now()
+    async fn from_snapshot(snapshot: Snapshot) -> Result<Store, SnapshotError> {
+        let now_unix_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("System Time is set before Unix Epoch")
-            .as_secs();
+            .as_millis();
         let hashmap: HashMap<Vec<u8>, StoreValue> = snapshot
             .entries
             .into_iter()
             .filter(|snapshot_entry| {
                 snapshot_entry.value.expiration_time_unix.is_none()
-                    || snapshot_entry.value.expiration_time_unix.unwrap() > now_unix_seconds
+                    || snapshot_entry.value.expiration_time_unix.unwrap() > now_unix_millis
             })
-            .map(|SnapshotEntry { key, value }| (key, value.into()))
-            .collect();
+            .map(
+                |SnapshotEntry { key, value }| -> Result<(Vec<u8>, StoreValue), SnapshotError> {
+                    Ok((key, value.try_into()?))
+                },
+            )
+            .collect::<Result<_, _>>()?;
         let expiration_heap: ExpirationHeap = hashmap
             .iter()
             .filter_map(|(key, store_value)| match store_value {
@@ -229,16 +233,16 @@ impl Store {
                 } => Some(Reverse((*expiration_instant, key.clone()))),
             })
             .collect();
-        Store::from_parts(hashmap, expiration_heap)
+        Ok(Store::from_parts(hashmap, expiration_heap))
     }
 
     pub async fn dump(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(&self.to_snapshot().await)
     }
 
-    pub async fn restore(bytes: &[u8]) -> Result<Store, serde_json::Error> {
-        let snapshot: Snapshot = serde_json::from_slice(bytes).unwrap();
-        Ok(Store::from_snapshot(snapshot).await)
+    pub async fn restore(bytes: &[u8]) -> Result<Store, RestoreError> {
+        let snapshot: Snapshot = serde_json::from_slice(bytes)?;
+        Store::from_snapshot(snapshot).await.map_err(Into::into)
     }
 }
 
@@ -258,7 +262,7 @@ struct StoreValue {
 struct SnapshotValue {
     #[serde(with = "serde_bytes")]
     value: Vec<u8>,
-    expiration_time_unix: Option<u64>,
+    expiration_time_unix: Option<u128>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -274,7 +278,50 @@ struct Snapshot {
 }
 
 #[derive(Debug)]
-struct SnapshotError;
+pub enum SnapshotError {
+    DurationOverflow,
+}
+
+impl fmt::Display for SnapshotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SnapshotError::DurationOverflow => {
+                write!(f, "snapshot expiration exceeds supported duration")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SnapshotError {}
+
+#[derive(Debug)]
+pub enum RestoreError {
+    InvalidSnapshot(serde_json::Error),
+    InvalidExpiration(SnapshotError),
+}
+
+impl fmt::Display for RestoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RestoreError::InvalidSnapshot(err) => write!(f, "{err}"),
+            RestoreError::InvalidExpiration(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for RestoreError {}
+
+impl From<serde_json::Error> for RestoreError {
+    fn from(value: serde_json::Error) -> Self {
+        RestoreError::InvalidSnapshot(value)
+    }
+}
+
+impl From<SnapshotError> for RestoreError {
+    fn from(value: SnapshotError) -> Self {
+        RestoreError::InvalidExpiration(value)
+    }
+}
 
 impl From<StoreValue> for SnapshotValue {
     fn from(store_value: StoreValue) -> Self {
@@ -282,15 +329,15 @@ impl From<StoreValue> for SnapshotValue {
             value,
             expiration_time,
         } = store_value;
-        let unix_now_seconds = SystemTime::now()
+        let unix_now_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("System Time is set before Unix Epoch")
-            .as_secs();
+            .as_millis();
         let store_now = Instant::now();
         Self {
             value,
             expiration_time_unix: expiration_time
-                .map(|t| t.saturating_duration_since(store_now).as_secs() + unix_now_seconds),
+                .map(|t| t.saturating_duration_since(store_now).as_millis() + unix_now_millis),
         }
     }
 }
@@ -301,39 +348,43 @@ impl From<&StoreValue> for SnapshotValue {
             value,
             expiration_time,
         } = store_value.clone();
-        let unix_now_seconds = SystemTime::now()
+        let unix_now_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time before UNIX epoch")
-            .as_secs();
+            .as_millis();
         let store_now = Instant::now();
         Self {
             value,
             expiration_time_unix: expiration_time
-                .map(|t| t.saturating_duration_since(store_now).as_secs() + unix_now_seconds),
+                .map(|t| t.saturating_duration_since(store_now).as_millis() + unix_now_millis),
         }
     }
 }
 
-impl From<SnapshotValue> for StoreValue {
-    fn from(snapshot_value: SnapshotValue) -> Self {
+impl TryFrom<SnapshotValue> for StoreValue {
+    type Error = SnapshotError;
+
+    fn try_from(snapshot_value: SnapshotValue) -> Result<Self, Self::Error> {
         let SnapshotValue {
             value,
             expiration_time_unix,
         } = snapshot_value;
-        let unix_now_seconds = SystemTime::now()
+        let unix_now_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time before UNIX epoch")
-            .as_secs();
+            .as_millis();
         let store_now = Instant::now();
-        Self {
+        Ok(Self {
             value,
-            expiration_time: expiration_time_unix.map(|t| {
-                let remaining = t.saturating_sub(unix_now_seconds);
+            expiration_time: expiration_time_unix.map(|t| -> Result<Instant, SnapshotError> {
+                let remaining = t.saturating_sub(unix_now_millis);
+                let remaining_millis =
+                    u64::try_from(remaining).map_err(|_| SnapshotError::DurationOverflow)?;
                 store_now
-                    .checked_add(Duration::from_secs(remaining))
-                    .expect("Unable to calculate expiration time")
-            }),
-        }
+                    .checked_add(Duration::from_millis(remaining_millis))
+                    .ok_or(SnapshotError::DurationOverflow)
+            }).transpose()?,
+        })
     }
 }
 
@@ -692,7 +743,7 @@ mod tests {
             expiration_time_unix: None,
         };
 
-        let store_value: StoreValue = snapshot_value.into();
+        let store_value: StoreValue = snapshot_value.try_into().expect("valid snapshot value");
 
         assert_eq!(store_value.value, b"snapshot-value".to_vec());
         assert_eq!(store_value.expiration_time, None);
@@ -703,7 +754,7 @@ mod tests {
         let before = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Time before UNIX epoch")
-            .as_secs();
+            .as_millis();
         let store_value = StoreValue {
             value: b"snapshot-value".to_vec(),
             expiration_time: Some(Instant::now() + Duration::from_secs(5)),
@@ -717,9 +768,9 @@ mod tests {
         let after = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Time before UNIX epoch")
-            .as_secs();
+            .as_millis();
 
-        assert!(((before + 4)..=(after + 5)).contains(&expiration_time_unix));
+        assert!(((before + 4_000)..=(after + 5_000)).contains(&expiration_time_unix));
     }
 
     #[test]
@@ -727,14 +778,14 @@ mod tests {
         let now_unix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Time before UNIX epoch")
-            .as_secs();
+            .as_millis();
         let snapshot_value = SnapshotValue {
             value: b"snapshot-value".to_vec(),
-            expiration_time_unix: Some(now_unix + 5),
+            expiration_time_unix: Some(now_unix + 5_000),
         };
         let before = Instant::now();
 
-        let store_value: StoreValue = snapshot_value.into();
+        let store_value: StoreValue = snapshot_value.try_into().expect("valid snapshot value");
 
         let after = Instant::now();
         let expiration_time = store_value
@@ -751,7 +802,7 @@ mod tests {
         let now_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time before UNIX epoch")
-            .as_secs();
+            .as_millis();
         let snapshot = Snapshot {
             entries: vec![
                 SnapshotEntry {
@@ -765,7 +816,7 @@ mod tests {
                     key: b"future-key".to_vec(),
                     value: SnapshotValue {
                         value: b"future-value".to_vec(),
-                        expiration_time_unix: Some(now_unix + 60),
+                        expiration_time_unix: Some(now_unix + 60_000),
                     },
                 },
                 SnapshotEntry {
@@ -778,7 +829,9 @@ mod tests {
             ],
         };
 
-        let store = Store::from_snapshot(snapshot).await;
+        let store = Store::from_snapshot(snapshot)
+            .await
+            .expect("valid snapshot");
 
         assert_eq!(
             Some(b"persistent-value".to_vec()),
@@ -819,7 +872,9 @@ mod tests {
         sleep(Duration::from_millis(1)).await;
 
         let snapshot = store.to_snapshot().await;
-        let restored = Store::from_snapshot(snapshot).await;
+        let restored = Store::from_snapshot(snapshot)
+            .await
+            .expect("valid snapshot");
 
         assert_eq!(
             Some(b"persistent-value".to_vec()),
@@ -835,5 +890,23 @@ mod tests {
         let future_ttl = restored.ttl(expiring_key).await;
         assert!((0..=60).contains(&future_ttl));
         assert_eq!(-2, restored.ttl(expired_key).await);
+    }
+
+    #[tokio::test]
+    async fn restore_invalid_json_returns_err() {
+        assert!(Store::restore(b"{").await.is_err())
+    }
+
+    #[test]
+    fn store_value_from_snapshot_rejects_unrepresentable_duration() {
+        let snapshot_value = SnapshotValue {
+            value: b"snapshot-value".to_vec(),
+            expiration_time_unix: Some(u128::MAX),
+        };
+
+        assert!(matches!(
+            StoreValue::try_from(snapshot_value),
+            Err(SnapshotError::DurationOverflow)
+        ));
     }
 }
