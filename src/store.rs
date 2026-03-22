@@ -911,4 +911,43 @@ mod tests {
             Err(SnapshotError::DurationOverflow)
         ));
     }
+
+    #[tokio::test]
+    async fn truncated_archive_is_rejected_by_restore() {
+        let s = Store::new();
+        for i in 0u8..3 {
+            s.set(i.to_le_bytes().to_vec(), b"my_value".to_vec()).await;
+        }
+        let truncated_dump = s.dump().await.unwrap();
+        for i in 1..=5 {
+            assert!(matches!(
+                Store::restore(
+                    truncated_dump.as_slice()[..truncated_dump.len() - i]
+                        .iter()
+                        .as_slice()
+                )
+                .await,
+                Err(RestoreError::InvalidSnapshot(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn view_json_dump() {
+        let s: Store = Store::new();
+        for i in 0u8..3 {
+            s.set(i.to_le_bytes().to_vec(), b"my_value".to_vec()).await;
+        }
+        let archive = s.dump().await.unwrap();
+        println!("{}", String::from_utf8(archive).unwrap());
+    }
+
+    #[tokio::test]
+    async fn restore_rejects_unix_timestamp_overflow() {
+        let archive = br#"{"entries":[{"key":[0],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":340282366920938463463374607431768211455}},{"key":[1],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[2],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}}]}"#;
+        assert!(matches!(
+            Store::restore(archive).await,
+            Err(RestoreError::InvalidExpiration(_))
+        ));
+    }
 }
