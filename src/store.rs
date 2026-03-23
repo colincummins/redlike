@@ -1061,4 +1061,11 @@ mod tests {
             Err(RestoreError::InvalidSnapshot(_))
         ));
     }
+
+    #[tokio::test]
+    async fn archive_with_no_entries_creates_empty_store() {
+        let archive = br#"{"entries":[]}"#;
+        let s = Store::restore(archive).await.unwrap();
+        assert_eq!(s.hashmap.read().await.len(), 0)
+    }
 }
