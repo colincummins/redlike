@@ -975,6 +975,15 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn duplicate_keys_fail_even_if_one_key_is_expired() {
+        let archive = br#"{"entries":[{"key":[0],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[0],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":0}},{"key":[2],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}}]}"#;
+        assert!(matches!(
+            Store::restore(archive).await,
+            Err(RestoreError::InvalidData(SnapshotError::DuplicateKey))
+        ));
+    }
+
     #[tokio::test(start_paused = true)]
     async fn dump_excludes_expired_entries() {
         let s = Store::new();
