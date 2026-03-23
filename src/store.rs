@@ -207,6 +207,14 @@ impl Store {
             .duration_since(UNIX_EPOCH)
             .expect("System Time is set before Unix Epoch")
             .as_millis();
+
+        let mut unique_keys: HashSet<Vec<u8>> = HashSet::new();
+        for entry in snapshot.entries.iter() {
+            if !unique_keys.insert(entry.key.clone()) {
+                return Err(SnapshotError::DuplicateKey);
+            }
+        }
+
         let hashmap: HashMap<Vec<u8>, StoreValue> = snapshot
             .entries
             .into_iter()
@@ -259,6 +267,7 @@ struct StoreValue {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 struct SnapshotValue {
     #[serde(with = "serde_bytes")]
     value: Vec<u8>,
@@ -266,6 +275,7 @@ struct SnapshotValue {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 struct SnapshotEntry {
     #[serde(with = "serde_bytes")]
     key: Vec<u8>,
@@ -273,6 +283,7 @@ struct SnapshotEntry {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 struct Snapshot {
     entries: Vec<SnapshotEntry>,
 }
@@ -280,6 +291,7 @@ struct Snapshot {
 #[derive(Debug)]
 pub enum SnapshotError {
     DurationOverflow,
+    DuplicateKey,
 }
 
 impl fmt::Display for SnapshotError {
@@ -287,6 +299,9 @@ impl fmt::Display for SnapshotError {
         match self {
             SnapshotError::DurationOverflow => {
                 write!(f, "snapshot expiration exceeds supported duration")
+            }
+            SnapshotError::DuplicateKey => {
+                write!(f, "snapshot contains duplicate keys")
             }
         }
     }
@@ -297,14 +312,14 @@ impl std::error::Error for SnapshotError {}
 #[derive(Debug)]
 pub enum RestoreError {
     InvalidSnapshot(serde_json::Error),
-    InvalidExpiration(SnapshotError),
+    InvalidData(SnapshotError),
 }
 
 impl fmt::Display for RestoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RestoreError::InvalidSnapshot(err) => write!(f, "{err}"),
-            RestoreError::InvalidExpiration(err) => write!(f, "{err}"),
+            RestoreError::InvalidData(err) => write!(f, "{err}"),
         }
     }
 }
@@ -319,7 +334,7 @@ impl From<serde_json::Error> for RestoreError {
 
 impl From<SnapshotError> for RestoreError {
     fn from(value: SnapshotError) -> Self {
-        RestoreError::InvalidExpiration(value)
+        RestoreError::InvalidData(value)
     }
 }
 
@@ -394,7 +409,7 @@ impl TryFrom<SnapshotValue> for StoreValue {
 mod tests {
     use super::*;
     use tokio::sync::Barrier;
-    use tokio::time::sleep;
+    use tokio::time::{self, sleep};
 
     #[tokio::test]
     async fn set_then_get() {
@@ -947,7 +962,103 @@ mod tests {
         let archive = br#"{"entries":[{"key":[0],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":340282366920938463463374607431768211455}},{"key":[1],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[2],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}}]}"#;
         assert!(matches!(
             Store::restore(archive).await,
-            Err(RestoreError::InvalidExpiration(_))
+            Err(RestoreError::InvalidData(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn restore_of_archives_with_duplicate_keys_fails() {
+        let archive = br#"{"entries":[{"key":[0],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[0],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[2],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}}]}"#;
+        assert!(matches!(
+            Store::restore(archive).await,
+            Err(RestoreError::InvalidData(SnapshotError::DuplicateKey))
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dump_excludes_expired_entries() {
+        let s = Store::new();
+        s.set(b"live_key".to_vec(), b"live_value".to_vec()).await;
+        s.expire(b"live_key".to_vec(), 1000).await;
+        s.set(b"expired_key".to_vec(), b"expired_value".to_vec())
+            .await;
+        s.expire(b"expired_key".to_vec(), 0).await;
+        s.set(b"persistent_key".to_vec(), b"persistent_value".to_vec())
+            .await;
+        let bytes = s.dump().await.unwrap();
+        let s = Store::restore(&bytes).await.unwrap();
+        time::advance(Duration::from_secs(5)).await;
+        assert_eq!(
+            s.get(&b"live_key".to_vec()).await.unwrap(),
+            b"live_value".to_vec()
+        );
+        assert!(s.get(&b"expired_key".to_vec()).await.is_none());
+        assert_eq!(
+            s.get(&b"persistent_key".to_vec()).await.unwrap(),
+            b"persistent_value".to_vec()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn binary_values_preserved_e2e() {
+        let s = Store::new();
+        s.set(b"empty_bytes_key".to_vec(), b"".to_vec()).await;
+        s.set(b"non_utf_bytes_key".to_vec(), b"\xF4\xFF".to_vec())
+            .await;
+        s.set(b"embedded_zero_key".to_vec(), b"hello\x00world".to_vec())
+            .await;
+        s.set(b"\xF4\xFF".to_vec(), b"value".to_vec()).await;
+        let bytes = s.dump().await.unwrap();
+        let s = Store::restore(&bytes).await.unwrap();
+        time::advance(Duration::from_secs(5)).await;
+        assert_eq!(
+            s.get(&b"empty_bytes_key".to_vec()).await.unwrap(),
+            b"".to_vec()
+        );
+        assert_eq!(
+            s.get(&b"non_utf_bytes_key".to_vec()).await.unwrap(),
+            b"\xF4\xFF".to_vec()
+        );
+        assert_eq!(
+            s.get(&b"embedded_zero_key".to_vec()).await.unwrap(),
+            b"hello\x00world".to_vec()
+        );
+        assert_eq!(
+            s.get(&b"\xF4\xFF".to_vec()).await.unwrap(),
+            b"value".to_vec()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expiration_times_properly_preserved_e2e() {
+        let s = Store::new();
+        s.set(b"live_key".to_vec(), b"live_value".to_vec()).await;
+        s.expire(b"live_key".to_vec(), 5).await;
+        let bytes = s.dump().await.unwrap();
+        let s = Store::restore(&bytes).await.unwrap();
+        assert_eq!(
+            s.get(&b"live_key".to_vec()).await.unwrap(),
+            b"live_value".to_vec()
+        );
+        time::advance(Duration::from_secs(5)).await;
+        assert!(s.get(&b"live_key".to_vec()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn json_with_missing_fields_fails() {
+        let archive = br#"{"entries":[{"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[1],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[2],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}}]}"#;
+        assert!(matches!(
+            Store::restore(archive).await,
+            Err(RestoreError::InvalidSnapshot(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn json_with_unrecognized_fields_fails() {
+        let archive = br#"{"entries":[{"key":[0],"unrecognized":[0],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[1],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}},{"key":[2],"value":{"value":[109,121,95,118,97,108,117,101],"expiration_time_unix":null}}]}"#;
+        assert!(matches!(
+            Store::restore(archive).await,
+            Err(RestoreError::InvalidSnapshot(_))
         ));
     }
 }
