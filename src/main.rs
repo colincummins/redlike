@@ -1,13 +1,15 @@
+use redlike::config::get_config;
 use redlike::server::run_server;
 use tokio::signal::{self};
 use tokio_util::sync::CancellationToken;
-const ADDR: &str = "127.0.0.1:6379";
 
 #[tokio::main]
 #[allow(unused_variables)]
 async fn main() -> Result<(), std::io::Error> {
+    let config = get_config();
+    let addr = format!("{}:{}", config.address, config.port);
     let shutdown_token = CancellationToken::new();
-    let (_address, handle) = run_server(ADDR, shutdown_token.clone()).await?;
+    let (_address, handle) = run_server(&addr, shutdown_token.clone()).await?;
 
     signal::ctrl_c().await?;
     shutdown_token.cancel();
