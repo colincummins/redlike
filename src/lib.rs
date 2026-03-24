@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod command;
 pub mod config;
 pub mod connection;
