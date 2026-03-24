@@ -7,9 +7,8 @@ use tokio_util::sync::CancellationToken;
 #[allow(unused_variables)]
 async fn main() -> Result<(), std::io::Error> {
     let config = get_config();
-    let addr = format!("{}:{}", config.address, config.port);
     let shutdown_token = CancellationToken::new();
-    let (_address, handle) = run_server(&addr, shutdown_token.clone()).await?;
+    let (_address, handle) = run_server(&config, shutdown_token.clone()).await?;
 
     signal::ctrl_c().await?;
     shutdown_token.cancel();

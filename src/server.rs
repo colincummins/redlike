@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::config::Config;
 use crate::connection::Connection;
 use crate::store::Store;
 use tokio::io::Result;
@@ -13,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 pub async fn server_from_listener(
     listener: TcpListener,
     shutdown_token: CancellationToken,
+    archive_file_path: Option<PathBuf>,
 ) -> Result<()> {
     let store = Store::new();
     let mut open_connections = JoinSet::new();
@@ -75,11 +78,16 @@ pub async fn server_from_listener(
 }
 
 pub async fn run_server(
-    listener_address: &str,
+    config: &Config,
     shutdown_token: CancellationToken,
 ) -> Result<(SocketAddr, JoinHandle<Result<()>>)> {
-    let listener = TcpListener::bind(listener_address).await?;
+    let addr = format!("{}:{}", config.address, config.port);
+    let listener = TcpListener::bind(addr).await?;
     let addr: SocketAddr = listener.local_addr()?;
-    let handle = tokio::spawn(server_from_listener(listener, shutdown_token.clone()));
+    let handle = tokio::spawn(server_from_listener(
+        listener,
+        shutdown_token.clone(),
+        config.archive_path.clone(),
+    ));
     Ok((addr, handle))
 }
