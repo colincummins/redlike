@@ -48,12 +48,10 @@ pub async fn load(path: PathBuf) -> Result<Store, ArchiveError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::ErrorKind;
     use std::io::Write;
     use std::path::PathBuf;
 
     use tempfile::{NamedTempFile, TempDir};
-    use tokio::fs::File;
 
     use crate::archive::{ArchiveError, load};
     #[tokio::test]
