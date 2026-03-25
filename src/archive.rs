@@ -1,5 +1,6 @@
 use crate::store::RestoreError;
 use crate::store::Store;
+use std::error;
 use std::{fmt, path::PathBuf};
 use tokio::fs;
 
@@ -29,8 +30,19 @@ impl fmt::Display for ArchiveError {
 impl std::error::Error for ArchiveError {}
 
 pub async fn load(path: PathBuf) -> Result<Store, ArchiveError> {
-    let contents = fs::read(path).await.map_err(ArchiveError::ReadFile)?;
-    Store::restore(contents.as_slice())
-        .await
-        .map_err(ArchiveError::InvalidArchive)
+    match fs::read(&path).await {
+        Ok(contents) => Store::restore(contents.as_slice())
+            .await
+            .map_err(ArchiveError::InvalidArchive),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Only treat it as first-run if the parent dir is usable.
+            match path.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() && !parent.exists() => {
+                    Err(ArchiveError::ReadFile(error))
+                }
+                _ => Ok(Store::new()),
+            }
+        }
+        Err(error) => Err(ArchiveError::ReadFile(error)),
+    }
 }
