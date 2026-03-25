@@ -1,5 +1,6 @@
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::archive::{ArchiveError, load};
@@ -46,6 +47,7 @@ impl std::error::Error for ServerError {}
 pub async fn server_from_listener(
     listener: TcpListener,
     store: Store,
+    archive_path: Option<PathBuf>,
     shutdown_token: CancellationToken,
 ) -> ServerResult<()> {
     let mut open_connections = JoinSet::new();
@@ -121,6 +123,7 @@ pub async fn run_server(
     let handle = tokio::spawn(server_from_listener(
         listener,
         store,
+        config.archive_path.clone(),
         shutdown_token.clone(),
     ));
     Ok((addr, handle))
