@@ -55,14 +55,14 @@ mod tests {
 
     use crate::archive::{ArchiveError, load};
     #[tokio::test]
-    async fn missing_file_with_relative_filename_returns_new_store() {
+    async fn load_missing_file_with_relative_filename_returns_new_store() {
         let file_path = PathBuf::new().join("test-archive");
         let store = load(file_path).await.unwrap();
         assert!(store.get(&b"missing-key".to_vec()).await.is_none());
     }
 
     #[tokio::test]
-    async fn missing_filename_in_existing_dir_returns_new_store() {
+    async fn load_missing_filename_in_existing_dir_returns_new_store() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test-archive");
         let store = load(file_path).await.unwrap();
@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_with_bad_directory_path_returns_error() {
+    async fn load_file_with_bad_directory_path_returns_error() {
         let file_path = TempDir::new()
             .unwrap()
             .path()
@@ -83,7 +83,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_archive_returns_invalid_archive_error() {
+    async fn load_malformed_archive_returns_invalid_archive_error() {
         let mut bad_archive = NamedTempFile::new().unwrap();
         let bad_bytes = b"This is not an archive";
         bad_archive.write_all(bad_bytes).unwrap();
