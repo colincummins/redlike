@@ -7,17 +7,13 @@ use tokio_util::sync::CancellationToken;
 
 pub async fn setup_test_server(
     listener_address: &str,
-) -> Result<
-    (
-        SocketAddr,
-        JoinHandle<io::Result<()>>,
-        CancellationToken,
-    ),
-    io::Error,
-> {
+) -> Result<(SocketAddr, JoinHandle<io::Result<()>>, CancellationToken), io::Error> {
     let shutdown_token = CancellationToken::new();
     let socket_addr: SocketAddr = listener_address.parse().map_err(|err| {
-        io::Error::new(ErrorKind::InvalidInput, format!("invalid test listener address: {err}"))
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("invalid test listener address: {err}"),
+        )
     })?;
     let config = Config {
         address: socket_addr.ip(),
