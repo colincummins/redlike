@@ -28,14 +28,9 @@ impl fmt::Display for ArchiveError {
 
 impl std::error::Error for ArchiveError {}
 
-pub async fn load(path: Option<PathBuf>) -> Result<Store, ArchiveError> {
-    match path {
-        Some(p) => {
-            let contents = fs::read(p).await.map_err(ArchiveError::ReadFile)?;
-            return Store::restore(contents.as_slice())
-                .await
-                .map_err(ArchiveError::InvalidArchive);
-        }
-        None => Ok(Store::new()),
-    }
+pub async fn load(path: PathBuf) -> Result<Store, ArchiveError> {
+    let contents = fs::read(path).await.map_err(ArchiveError::ReadFile)?;
+    Store::restore(contents.as_slice())
+        .await
+        .map_err(ArchiveError::InvalidArchive)
 }

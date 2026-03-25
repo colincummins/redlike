@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 #[allow(unused_variables)]
-async fn main() -> Result<(), std::io::Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = get_config();
     let shutdown_token = CancellationToken::new();
     let (_address, handle) = run_server(&config, shutdown_token.clone()).await?;

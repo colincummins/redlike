@@ -1,6 +1,7 @@
 use redlike::config::Config;
-use redlike::server::run_server;
+use redlike::server::{ServerError, run_server};
 use std::net::SocketAddr;
+use tokio::io::{self, ErrorKind};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -9,23 +10,35 @@ pub async fn setup_test_server(
 ) -> Result<
     (
         SocketAddr,
-        JoinHandle<Result<(), tokio::io::Error>>,
+        JoinHandle<io::Result<()>>,
         CancellationToken,
     ),
-    tokio::io::Error,
+    io::Error,
 > {
     let shutdown_token = CancellationToken::new();
     let socket_addr: SocketAddr = listener_address.parse().map_err(|err| {
-        tokio::io::Error::new(
-            tokio::io::ErrorKind::InvalidInput,
-            format!("invalid test listener address: {err}"),
-        )
+        io::Error::new(ErrorKind::InvalidInput, format!("invalid test listener address: {err}"))
     })?;
     let config = Config {
         address: socket_addr.ip(),
         port: socket_addr.port(),
         archive_path: None,
     };
-    let (addr, handle) = run_server(&config, shutdown_token.clone()).await?;
+    let (addr, handle) = run_server(&config, shutdown_token.clone())
+        .await
+        .map_err(server_error_to_io)?;
+    let handle = tokio::spawn(async move {
+        handle
+            .await
+            .map_err(io::Error::other)?
+            .map_err(io::Error::other)
+    });
     Ok((addr, handle, shutdown_token))
+}
+
+fn server_error_to_io(err: ServerError) -> io::Error {
+    match err {
+        ServerError::Io(err) => err,
+        ServerError::Archive(err) => io::Error::other(err),
+    }
 }

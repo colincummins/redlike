@@ -2,7 +2,8 @@ mod common;
 use common::test_client::TestClient;
 use redlike::config::Config;
 use redlike::frame::Frame;
-use redlike::server::run_server;
+use redlike::server::{ServerError, run_server};
+use tokio::io;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -51,7 +52,9 @@ async fn get_set_del_same_record() -> tokio::io::Result<()> {
         port: 0,
         archive_path: None,
     };
-    let (addr, handle) = run_server(&config, shutdown).await?;
+    let (addr, handle) = run_server(&config, shutdown)
+        .await
+        .map_err(server_error_to_io)?;
 
     let mut client_handles = JoinSet::new();
 
@@ -65,4 +68,11 @@ async fn get_set_del_same_record() -> tokio::io::Result<()> {
 
     handle.abort();
     Ok(())
+}
+
+fn server_error_to_io(err: ServerError) -> io::Error {
+    match err {
+        ServerError::Io(err) => err,
+        ServerError::Archive(err) => io::Error::other(err),
+    }
 }

@@ -1,23 +1,53 @@
+use std::fmt;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::archive::{ArchiveError, load};
 use crate::config::Config;
 use crate::connection::Connection;
 use crate::store::Store;
-use tokio::io::Result;
 use tokio::net::TcpListener;
 use tokio::select;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug)]
+pub enum ServerError {
+    Io(std::io::Error),
+    Archive(ArchiveError),
+}
+
+type ServerResult<T> = std::result::Result<T, ServerError>;
+
+impl fmt::Display for ServerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ServerError::Io(e) => write!(f, "Server IO Error {}", e),
+            ServerError::Archive(e) => write!(f, "Archive Error {}", e),
+        }
+    }
+}
+
+impl From<std::io::Error> for ServerError {
+    fn from(value: std::io::Error) -> Self {
+        ServerError::Io(value)
+    }
+}
+
+impl From<ArchiveError> for ServerError {
+    fn from(value: ArchiveError) -> Self {
+        ServerError::Archive(value)
+    }
+}
+
+impl std::error::Error for ServerError {}
+
 pub async fn server_from_listener(
     listener: TcpListener,
+    store: Store,
     shutdown_token: CancellationToken,
-    archive_file_path: Option<PathBuf>,
-) -> Result<()> {
-    let store = Store::new();
+) -> ServerResult<()> {
     let mut open_connections = JoinSet::new();
 
     loop {
@@ -80,14 +110,18 @@ pub async fn server_from_listener(
 pub async fn run_server(
     config: &Config,
     shutdown_token: CancellationToken,
-) -> Result<(SocketAddr, JoinHandle<Result<()>>)> {
+) -> ServerResult<(SocketAddr, JoinHandle<ServerResult<()>>)> {
     let addr = format!("{}:{}", config.address, config.port);
     let listener = TcpListener::bind(addr).await?;
     let addr: SocketAddr = listener.local_addr()?;
+    let store: Store = match config.archive_path.clone() {
+        Some(path) => load(path).await.map_err(ServerError::Archive)?,
+        None => Store::new(),
+    };
     let handle = tokio::spawn(server_from_listener(
         listener,
+        store,
         shutdown_token.clone(),
-        config.archive_path.clone(),
     ));
     Ok((addr, handle))
 }
