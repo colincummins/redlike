@@ -89,6 +89,7 @@ mod tests {
     use std::path::PathBuf;
 
     use tempfile::{NamedTempFile, TempDir, tempdir};
+    use tokio::time::{self, Duration};
 
     use crate::archive::save;
     use crate::{
@@ -145,5 +146,148 @@ mod tests {
         save(path.clone(), store).await.unwrap();
         let store = load(path).await.unwrap();
         assert_eq!(store.get(&key).await.unwrap(), value);
+    }
+
+    #[tokio::test]
+    async fn overwriting_erases_old_archive() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("archive");
+
+        let key_a = b"my_key_a".to_vec();
+        let value_a = b"my_value_a".to_vec();
+
+        let key_b = b"my_key_b".to_vec();
+        let value_b = b"my_value_b".to_vec();
+
+        let store = Store::new();
+        store.set(key_a.clone(), value_a.clone()).await;
+        save(path.clone(), store).await.unwrap();
+
+        let store = Store::new();
+        store.set(key_b.clone(), value_b.clone()).await;
+        save(path.clone(), store).await.unwrap();
+
+        let store = load(path).await.unwrap();
+        assert!(store.get(&key_a).await.is_none());
+        assert_eq!(store.get(&key_b).await.unwrap(), value_b);
+    }
+
+    #[tokio::test]
+    async fn save_to_missing_directory_returns_write_error() {
+        let path = TempDir::new()
+            .unwrap()
+            .path()
+            .join("does_not_exist")
+            .join("archive");
+
+        assert!(matches!(
+            save(path, Store::new()).await,
+            Err(ArchiveError::WriteFile(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn round_trip_preserves_binary_keys_and_values() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("archive");
+        let store = Store::new();
+
+        let entries = [
+            (b"empty-value".to_vec(), b"".to_vec()),
+            (b"non-utf-value".to_vec(), b"\xF4\xFF".to_vec()),
+            (b"embedded-zero-value".to_vec(), b"hello\x00world".to_vec()),
+            (b"\xF4\xFF".to_vec(), b"value".to_vec()),
+        ];
+
+        for (key, value) in &entries {
+            store.set(key.clone(), value.clone()).await;
+        }
+
+        save(path.clone(), store).await.unwrap();
+        let store = load(path).await.unwrap();
+
+        for (key, value) in entries {
+            assert_eq!(store.get(&key).await.unwrap(), value);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn round_trip_preserves_live_ttl_and_drops_expired_items() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("archive");
+        let store = Store::new();
+
+        let persistent_key = b"persistent-key".to_vec();
+        let live_key = b"live-key".to_vec();
+        let expired_key = b"expired-key".to_vec();
+
+        store
+            .set(persistent_key.clone(), b"persistent-value".to_vec())
+            .await;
+        store.set(live_key.clone(), b"live-value".to_vec()).await;
+        store
+            .set(expired_key.clone(), b"expired-value".to_vec())
+            .await;
+
+        assert_eq!(1, store.expire(live_key.clone(), 5).await);
+        assert_eq!(1, store.expire(expired_key.clone(), 0).await);
+
+        save(path.clone(), store).await.unwrap();
+        let store = load(path).await.unwrap();
+
+        assert_eq!(
+            store.get(&persistent_key).await.unwrap(),
+            b"persistent-value".to_vec()
+        );
+        assert_eq!(store.get(&live_key).await.unwrap(), b"live-value".to_vec());
+        assert!(store.ttl(live_key.clone()).await > 0);
+        assert!(store.get(&expired_key).await.is_none());
+        assert_eq!(store.ttl(expired_key).await, -2);
+
+        time::advance(Duration::from_secs(5)).await;
+        assert!(store.get(&live_key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn save_of_empty_store_loads_as_empty_store() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("archive");
+
+        save(path.clone(), Store::new()).await.unwrap();
+        let store = load(path).await.unwrap();
+
+        assert!(store.get(&b"missing-key".to_vec()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn multiple_overwrites_return_latest_contents() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("archive");
+
+        let first = Store::new();
+        first
+            .set(b"first-key".to_vec(), b"first-value".to_vec())
+            .await;
+        save(path.clone(), first).await.unwrap();
+
+        let second = Store::new();
+        second
+            .set(b"second-key".to_vec(), b"second-value".to_vec())
+            .await;
+        save(path.clone(), second).await.unwrap();
+
+        let third = Store::new();
+        third
+            .set(b"third-key".to_vec(), b"third-value".to_vec())
+            .await;
+        save(path.clone(), third).await.unwrap();
+
+        let store = load(path).await.unwrap();
+        assert!(store.get(&b"first-key".to_vec()).await.is_none());
+        assert!(store.get(&b"second-key".to_vec()).await.is_none());
+        assert_eq!(
+            store.get(&b"third-key".to_vec()).await.unwrap(),
+            b"third-value".to_vec()
+        );
     }
 }
