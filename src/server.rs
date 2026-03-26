@@ -47,7 +47,7 @@ impl std::error::Error for ServerError {}
 pub async fn server_from_listener(
     listener: TcpListener,
     store: Store,
-    archive_path: Option<PathBuf>,
+    _archive_path: Option<PathBuf>,
     shutdown_token: CancellationToken,
 ) -> ServerResult<()> {
     let mut open_connections = JoinSet::new();

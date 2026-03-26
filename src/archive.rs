@@ -1,12 +1,17 @@
 use crate::store::RestoreError;
 use crate::store::Store;
 use std::{fmt, path::PathBuf};
+use tempfile::Builder;
 use tokio::fs;
+use tokio::fs::File;
+use tokio::fs::rename;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug)]
 pub enum ArchiveError {
     ReadFile(std::io::Error),
     InvalidArchive(RestoreError),
+    InvalidStore(serde_json::Error),
     WriteFile(std::io::Error),
 }
 
@@ -21,6 +26,9 @@ impl fmt::Display for ArchiveError {
             }
             ArchiveError::InvalidArchive(_) => {
                 write!(f, "Invalid archive format")
+            }
+            ArchiveError::InvalidStore(_) => {
+                write!(f, "Unable to serialize store")
             }
         }
     }
@@ -44,6 +52,38 @@ pub async fn load(path: PathBuf) -> Result<Store, ArchiveError> {
         }
         Err(error) => Err(ArchiveError::ReadFile(error)),
     }
+}
+
+pub async fn save(path: PathBuf, store: Store) -> Result<(), ArchiveError> {
+    let bytes = store.dump().await.map_err(ArchiveError::InvalidStore)?;
+    save_bytes(&path, &bytes)
+        .await
+        .map_err(ArchiveError::WriteFile)?;
+    Ok(())
+}
+
+async fn save_bytes(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or(std::path::Path::new("."));
+    let temp_archive = Builder::new()
+        .prefix("archive.")
+        .suffix(".tmp")
+        .tempfile_in(parent)?;
+    let path_tmp = temp_archive.path().to_path_buf();
+    let mut temp_archive = File::from_std(temp_archive.into_file());
+
+    temp_archive.write_all(bytes).await?;
+    temp_archive.sync_all().await?;
+    drop(temp_archive);
+
+    rename(path_tmp, path).await?;
+
+    #[cfg(unix)]
+    {
+        let dir = File::open(parent).await?;
+        dir.sync_all().await?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
