@@ -1,5 +1,6 @@
+use crate::common::server_error_to_io;
 use redlike::config::Config;
-use redlike::server::{ServerError, run_server};
+use redlike::server::run_server;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::io::{self, ErrorKind};
@@ -39,11 +40,4 @@ pub async fn setup_test_server_with_archive(
             .map_err(io::Error::other)
     });
     Ok((addr, handle, shutdown_token))
-}
-
-fn server_error_to_io(err: ServerError) -> io::Error {
-    match err {
-        ServerError::Io(err) => err,
-        ServerError::Archive(err) => io::Error::other(err),
-    }
 }

@@ -18,6 +18,8 @@ use tokio_util::sync::CancellationToken;
 pub enum ServerError {
     Io(std::io::Error),
     Archive(ArchiveError),
+    InvalidAuthFile,
+    UnreadableAuthFile(std::io::Error),
 }
 
 type ServerResult<T> = std::result::Result<T, ServerError>;
@@ -27,6 +29,12 @@ impl fmt::Display for ServerError {
         match self {
             ServerError::Io(e) => write!(f, "Server IO Error {}", e),
             ServerError::Archive(e) => write!(f, "Archive Error {}", e),
+            ServerError::InvalidAuthFile => {
+                write!(f, "Password file contains unsupported contents")
+            }
+            ServerError::UnreadableAuthFile(e) => {
+                write!(f, "Unreadable or missing password file - {}", e)
+            }
         }
     }
 }
