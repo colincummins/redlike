@@ -51,6 +51,7 @@ async fn get_set_del_same_record() -> tokio::io::Result<()> {
         address: "127.0.0.1".parse().unwrap(),
         port: 0,
         archive_path: None,
+        auth_password_file: None,
     };
     let (addr, handle) = run_server(&config, shutdown)
         .await

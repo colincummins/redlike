@@ -10,6 +10,8 @@ pub struct Config {
     pub port: u16,
     #[arg(short = 'r', long, env, default_value = None)]
     pub archive_path: Option<std::path::PathBuf>,
+    #[arg(long, env, default_value = None)]
+    pub auth_password_file: Option<std::path::PathBuf>,
 }
 
 pub fn get_config() -> Config {

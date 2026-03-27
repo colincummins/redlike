@@ -27,6 +27,7 @@ pub async fn setup_test_server_with_archive(
         address: socket_addr.ip(),
         port: socket_addr.port(),
         archive_path,
+        auth_password_file: None,
     };
     let (addr, handle) = run_server(&config, shutdown_token.clone())
         .await
