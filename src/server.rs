@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::archive::save;
 use crate::archive::{ArchiveError, load};
 use crate::config::Config;
 use crate::connection::Connection;
@@ -47,7 +48,7 @@ impl std::error::Error for ServerError {}
 pub async fn server_from_listener(
     listener: TcpListener,
     store: Store,
-    _archive_path: Option<PathBuf>,
+    archive_path: Option<PathBuf>,
     shutdown_token: CancellationToken,
 ) -> ServerResult<()> {
     let mut open_connections = JoinSet::new();
@@ -104,6 +105,10 @@ pub async fn server_from_listener(
                 println!("connection task failed: {:?}", err);
             }
         }
+    }
+
+    if let Some(p) = archive_path {
+        save(p, store).await?;
     }
 
     Ok(())
