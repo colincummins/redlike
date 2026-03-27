@@ -58,6 +58,8 @@ where
             Command::TTL { key } => {
                 ProcessOutcome::Respond(Frame::Integer(self.store.ttl(key).await))
             }
+            //TODO: Implement handling
+            Command::AUTH { key: _ } => ProcessOutcome::Respond(Frame::SimpleString("OK".into())),
         }
     }
 

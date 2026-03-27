@@ -12,6 +12,7 @@ pub enum Command {
     TTL { key: Vec<u8> },
     QUIT,
     NOOP,
+    AUTH { key: Vec<u8> },
 }
 
 fn bulk_args(value: &Frame) -> Result<Vec<&[u8]>, Error> {
@@ -98,6 +99,13 @@ fn parse_ttl(argv: &[&[u8]]) -> Result<Command, Error> {
     }
 }
 
+fn parse_auth(argv: &[&[u8]]) -> Result<Command, Error> {
+    match argv {
+        [key] => Ok(Command::AUTH { key: key.to_vec() }),
+        _ => Err(wrong_arity("AUTH", argv.len(), 1)),
+    }
+}
+
 impl TryFrom<&Frame> for Command {
     type Error = Error;
 
@@ -126,6 +134,9 @@ impl TryFrom<&Frame> for Command {
         if cmd.eq_ignore_ascii_case(b"ttl") {
             return parse_ttl(argv);
         }
+        if cmd.eq_ignore_ascii_case(b"auth") {
+            return parse_auth(argv);
+        }
 
         Err(Error::UnknownCommand)
     }
@@ -147,9 +158,24 @@ mod tests {
         Frame::Bulk(Some(value.to_vec()))
     }
 
+    fn array(parts: &[&[u8]]) -> Frame {
+        Frame::Array(Some(parts.iter().map(|part| bulk(part)).collect()))
+    }
+
+    fn assert_wrong_arity(frame: Frame, expected_command: &str, given: usize, expected: usize) {
+        assert!(matches!(
+            Command::try_from(frame),
+            Err(Error::WrongArity {
+                command,
+                given: actual_given,
+                expected: actual_expected,
+            }) if command == expected_command && actual_given == given && actual_expected == expected
+        ));
+    }
+
     #[test]
     fn get_command_parses() {
-        let frame = Frame::Array(Some(vec![bulk(b"GET"), bulk(b"mykey")]));
+        let frame = array(&[b"GET", b"mykey"]);
 
         let command = Command::try_from(frame).unwrap();
         assert_eq!(
@@ -162,7 +188,7 @@ mod tests {
 
     #[test]
     fn ping_command_parses() {
-        let frame = Frame::Array(Some(vec![bulk(b"PING")]));
+        let frame = array(&[b"PING"]);
 
         let command = Command::try_from(frame).unwrap();
         assert_eq!(command, Command::PING);
@@ -170,7 +196,7 @@ mod tests {
 
     #[test]
     fn quit_command_parses() {
-        let frame = Frame::Array(Some(vec![bulk(b"QUIT")]));
+        let frame = array(&[b"QUIT"]);
 
         let command = Command::try_from(frame).unwrap();
         assert_eq!(command, Command::QUIT);
@@ -178,7 +204,7 @@ mod tests {
 
     #[test]
     fn set_command_parses() {
-        let frame = Frame::Array(Some(vec![bulk(b"SET"), bulk(b"mykey"), bulk(b"myvalue")]));
+        let frame = array(&[b"SET", b"mykey", b"myvalue"]);
 
         let command = Command::try_from(frame).unwrap();
         assert_eq!(
@@ -192,7 +218,7 @@ mod tests {
 
     #[test]
     fn del_command_parses() {
-        let frame = Frame::Array(Some(vec![bulk(b"DEL"), bulk(b"mykey")]));
+        let frame = array(&[b"DEL", b"mykey"]);
 
         let command = Command::try_from(frame).unwrap();
         assert_eq!(
@@ -205,7 +231,7 @@ mod tests {
 
     #[test]
     fn expire_command_parses() {
-        let frame = Frame::Array(Some(vec![bulk(b"EXPIRE"), bulk(b"mykey"), bulk(b"123")]));
+        let frame = array(&[b"EXPIRE", b"mykey", b"123"]);
 
         let command = Command::try_from(frame).unwrap();
         assert_eq!(
@@ -219,7 +245,7 @@ mod tests {
 
     #[test]
     fn ttl_command_parses() {
-        let frame = Frame::Array(Some(vec![bulk(b"TTL"), bulk(b"mykey")]));
+        let frame = array(&[b"TTL", b"mykey"]);
 
         let command = Command::try_from(frame).unwrap();
         assert_eq!(
@@ -231,14 +257,28 @@ mod tests {
     }
 
     #[test]
+    fn auth_command_parses() {
+        let frame = array(&[b"AUTH", b"mypass"]);
+
+        let command = Command::try_from(frame).unwrap();
+        assert_eq!(
+            command,
+            Command::AUTH {
+                key: b"mypass".to_vec()
+            }
+        );
+    }
+
+    #[test]
     fn command_name_is_case_insensitive() {
-        let ping = Frame::Array(Some(vec![bulk(b"pInG")]));
-        let quit = Frame::Array(Some(vec![bulk(b"qUiT")]));
-        let get = Frame::Array(Some(vec![bulk(b"gEt"), bulk(b"mykey")]));
-        let set = Frame::Array(Some(vec![bulk(b"SeT"), bulk(b"mykey"), bulk(b"myvalue")]));
-        let del = Frame::Array(Some(vec![bulk(b"dEl"), bulk(b"mykey")]));
-        let expire = Frame::Array(Some(vec![bulk(b"eXpIrE"), bulk(b"mykey"), bulk(b"60")]));
-        let ttl = Frame::Array(Some(vec![bulk(b"TtL"), bulk(b"mykey")]));
+        let ping = array(&[b"pInG"]);
+        let quit = array(&[b"qUiT"]);
+        let get = array(&[b"gEt", b"mykey"]);
+        let set = array(&[b"SeT", b"mykey", b"myvalue"]);
+        let del = array(&[b"dEl", b"mykey"]);
+        let expire = array(&[b"eXpIrE", b"mykey", b"60"]);
+        let ttl = array(&[b"TtL", b"mykey"]);
+        let auth = array(&[b"AuTh", b"mypass"]);
 
         assert_eq!(Command::try_from(ping).unwrap(), Command::PING);
         assert_eq!(Command::try_from(quit).unwrap(), Command::QUIT);
@@ -274,6 +314,12 @@ mod tests {
                 key: b"mykey".to_vec()
             }
         );
+        assert_eq!(
+            Command::try_from(auth).unwrap(),
+            Command::AUTH {
+                key: b"mypass".to_vec()
+            }
+        );
     }
 
     #[test]
@@ -290,6 +336,19 @@ mod tests {
             Command::SET {
                 key: b"\0key\xff".to_vec(),
                 value: b"va\0lue\xfe".to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn binary_auth_key_is_preserved() {
+        let frame = array(&[b"AUTH", b"\0pass\xff"]);
+
+        let command = Command::try_from(frame).unwrap();
+        assert_eq!(
+            command,
+            Command::AUTH {
+                key: b"\0pass\xff".to_vec()
             }
         );
     }
@@ -340,7 +399,7 @@ mod tests {
 
     #[test]
     fn unknown_command_returns_unknown_command() {
-        let frame = Frame::Array(Some(vec![bulk(b"FOO"), bulk(b"bar")]));
+        let frame = array(&[b"FOO", b"bar"]);
 
         assert!(matches!(
             Command::try_from(frame),
@@ -350,152 +409,52 @@ mod tests {
 
     #[test]
     fn get_with_missing_key_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"GET")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 0,
-                expected: 1,
-            }) if command == "GET"
-        ));
+        assert_wrong_arity(array(&[b"GET"]), "GET", 0, 1);
     }
 
     #[test]
     fn ping_with_extra_args_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"PING"), bulk(b"extra")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 1,
-                expected: 0,
-            }) if command == "PING"
-        ));
+        assert_wrong_arity(array(&[b"PING", b"extra"]), "PING", 1, 0);
     }
 
     #[test]
     fn quit_with_extra_args_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"QUIT"), bulk(b"extra")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 1,
-                expected: 0,
-            }) if command == "QUIT"
-        ));
+        assert_wrong_arity(array(&[b"QUIT", b"extra"]), "QUIT", 1, 0);
     }
 
     #[test]
     fn get_with_extra_args_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"GET"), bulk(b"key"), bulk(b"extra")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 2,
-                expected: 1,
-            }) if command == "GET"
-        ));
+        assert_wrong_arity(array(&[b"GET", b"key", b"extra"]), "GET", 2, 1);
     }
 
     #[test]
     fn set_with_missing_value_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"SET"), bulk(b"key")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 1,
-                expected: 2,
-            }) if command == "SET"
-        ));
+        assert_wrong_arity(array(&[b"SET", b"key"]), "SET", 1, 2);
     }
 
     #[test]
     fn set_with_extra_args_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![
-            bulk(b"SET"),
-            bulk(b"key"),
-            bulk(b"value"),
-            bulk(b"extra"),
-        ]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 3,
-                expected: 2,
-            }) if command == "SET"
-        ));
+        assert_wrong_arity(array(&[b"SET", b"key", b"value", b"extra"]), "SET", 3, 2);
     }
 
     #[test]
     fn del_with_missing_key_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"DEL")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 0,
-                expected: 1,
-            }) if command == "DEL"
-        ));
+        assert_wrong_arity(array(&[b"DEL"]), "DEL", 0, 1);
     }
 
     #[test]
     fn del_with_extra_args_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"DEL"), bulk(b"key"), bulk(b"extra")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 2,
-                expected: 1,
-            }) if command == "DEL"
-        ));
+        assert_wrong_arity(array(&[b"DEL", b"key", b"extra"]), "DEL", 2, 1);
     }
 
     #[test]
     fn expire_with_missing_ttl_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"EXPIRE"), bulk(b"key")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 1,
-                expected: 2,
-            }) if command == "EXPIRE"
-        ));
+        assert_wrong_arity(array(&[b"EXPIRE", b"key"]), "EXPIRE", 1, 2);
     }
 
     #[test]
     fn expire_with_extra_args_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![
-            bulk(b"EXPIRE"),
-            bulk(b"key"),
-            bulk(b"60"),
-            bulk(b"extra"),
-        ]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 3,
-                expected: 2,
-            }) if command == "EXPIRE"
-        ));
+        assert_wrong_arity(array(&[b"EXPIRE", b"key", b"60", b"extra"]), "EXPIRE", 3, 2);
     }
 
     #[test]
@@ -528,29 +487,21 @@ mod tests {
 
     #[test]
     fn ttl_with_missing_key_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"TTL")]));
-
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 0,
-                expected: 1,
-            }) if command == "TTL"
-        ));
+        assert_wrong_arity(array(&[b"TTL"]), "TTL", 0, 1);
     }
 
     #[test]
     fn ttl_with_extra_args_returns_wrong_arity() {
-        let frame = Frame::Array(Some(vec![bulk(b"TTL"), bulk(b"key"), bulk(b"extra")]));
+        assert_wrong_arity(array(&[b"TTL", b"key", b"extra"]), "TTL", 2, 1);
+    }
 
-        assert!(matches!(
-            Command::try_from(frame),
-            Err(Error::WrongArity {
-                command,
-                given: 2,
-                expected: 1,
-            }) if command == "TTL"
-        ));
+    #[test]
+    fn auth_with_missing_key_returns_wrong_arity() {
+        assert_wrong_arity(array(&[b"AUTH"]), "AUTH", 0, 1);
+    }
+
+    #[test]
+    fn auth_with_extra_args_returns_wrong_arity() {
+        assert_wrong_arity(array(&[b"AUTH", b"key", b"extra"]), "AUTH", 2, 1);
     }
 }
