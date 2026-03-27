@@ -1,7 +1,10 @@
 mod common;
 
-use common::setup_test_server::setup_test_server;
+use common::setup_test_server::{setup_test_server, setup_test_server_with_archive};
 use common::test_client::TestClient;
+use redlike::archive::load;
+use redlike::frame::Frame;
+use tempfile::tempdir;
 use tokio::io::ErrorKind;
 use tokio::net::TcpStream;
 use tokio::time::{Duration, timeout};
@@ -85,5 +88,29 @@ async fn midstream_client_is_closed_by_shutdown() -> tokio::io::Result<()> {
     shutdown.cancel();
     assert_server_shutdown(handle).await?;
     assert_connection_closed(&mut client).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn shutdown_persists_store_to_archive() -> tokio::io::Result<()> {
+    let temp_dir = tempdir()?;
+    let archive_path = temp_dir.path().join("redlike.rdb");
+    let (addr, handle, shutdown) =
+        setup_test_server_with_archive(ADDR, Some(archive_path.clone())).await?;
+    let mut client = TestClient::new(addr).await?;
+
+    client
+        .write(b"*3\r\n$3\r\nSET\r\n$7\r\npersist\r\n$5\r\nvalue\r\n")
+        .await?;
+    assert_eq!(client.read_frame().await?, Frame::SimpleString("OK".into()));
+
+    shutdown.cancel();
+    assert_server_shutdown(handle).await?;
+
+    let store = load(archive_path).await.map_err(tokio::io::Error::other)?;
+    assert_eq!(
+        store.get(&b"persist".to_vec()).await,
+        Some(b"value".to_vec())
+    );
     Ok(())
 }

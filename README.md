@@ -3,8 +3,37 @@ Redlike is a concurrent, in-memory key-value store that communicates with client
 
 Implemented commands include `PING`, `GET`, `SET`, `DEL`, `EXPIRE`, `TTL`, and `QUIT`.
 Expired keys are treated as missing on reads, and a background sweeper removes expired entries from the store.
+When configured with an archive path, the server loads persisted state on startup and saves it again during graceful shutdown.
 
 The project is covered by unit tests, including deterministic Tokio paused-time tests for expiration and TTL behavior.
+
+# Running The Server
+
+By default, the server listens on `127.0.0.1:6379`.
+
+Configuration is available through CLI flags or environment variables:
+
+* `--address`, `-a`, or `ADDRESS`
+* `--port`, `-p`, or `PORT`
+* `--archive-path`, `-r`, or `ARCHIVE_PATH`
+
+Example:
+
+```text
+cargo run -- --address 127.0.0.1 --port 6379 --archive-path /tmp/redlike.rdb
+```
+
+## Archive Persistence
+
+When `--archive-path` is set, Redlike:
+
+* loads the archive at startup if the file exists
+* starts with an empty store if the archive file does not exist yet
+* writes the current store to the archive during graceful shutdown
+
+Archive saves preserve live TTLs and omit keys that are already expired at save time.
+
+Graceful shutdown currently includes terminal Ctrl-C (`SIGINT`) and Unix `SIGTERM`. It does not include forced termination such as `SIGKILL`, so the most recent writes can still be lost in those cases.
 
 # API Specification
 

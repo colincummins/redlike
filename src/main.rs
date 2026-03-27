@@ -1,19 +1,36 @@
 use redlike::config::get_config;
 use redlike::server::run_server;
-use tokio::signal::{self};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 #[allow(unused_variables)]
-async fn main() -> Result<(), std::io::Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = get_config();
-    let addr = format!("{}:{}", config.address, config.port);
     let shutdown_token = CancellationToken::new();
-    let (_address, handle) = run_server(&addr, shutdown_token.clone()).await?;
+    let (_address, handle) = run_server(&config, shutdown_token.clone()).await?;
 
-    signal::ctrl_c().await?;
+    wait_for_shutdown_signal().await?;
     shutdown_token.cancel();
     handle.await.map_err(std::io::Error::other)??;
 
     Ok(())
+}
+
+async fn wait_for_shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut sigterm = signal(SignalKind::terminate())?;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = sigterm.recv() => {}
+        }
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
 }
