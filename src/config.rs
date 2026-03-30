@@ -1,8 +1,9 @@
+use core::fmt;
 use std::net::IpAddr;
 
 use clap::Parser;
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 pub struct Config {
     #[arg(short, long, env, default_value = "127.0.0.1")]
     pub address: IpAddr,
@@ -12,6 +13,19 @@ pub struct Config {
     pub archive_path: Option<std::path::PathBuf>,
     #[arg(long, env = "AUTH_PASSWORD", hide_env_values = true)]
     pub auth_password: Option<String>,
+}
+
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_password = self.auth_password.as_ref().map(|_| "-----");
+
+        f.debug_struct("Config")
+            .field("address", &self.address)
+            .field("port", &self.port)
+            .field("archive_path", &self.archive_path)
+            .field("auth_password", &redacted_password)
+            .finish()
+    }
 }
 
 pub fn get_config() -> Config {
