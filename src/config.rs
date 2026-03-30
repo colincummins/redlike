@@ -54,6 +54,48 @@ mod tests {
             std::env::remove_var(key);
         }
     }
+    #[test]
+    fn debug_formatting_hides_password() {
+        let config = Config::try_parse_from([
+            "redlike",
+            "--address",
+            "127.0.0.2",
+            "--port",
+            "6380",
+            "--archive-path",
+            "/tmp/redlike.rdb",
+            "--auth-password",
+            "test_password",
+        ])
+        .unwrap();
+
+        let debug = format!("{:?}", config);
+
+        assert!(!debug.contains("test_password"));
+        assert_eq!(
+            "Config { address: 127.0.0.2, port: 6380, archive_path: Some(\"/tmp/redlike.rdb\"), auth_password: Some(\"-----\") }",
+            debug
+        )
+    }
+
+    #[test]
+    fn debug_formatting_shows_none_when_password_is_absent() {
+        let config = Config::try_parse_from([
+            "redlike",
+            "--address",
+            "127.0.0.2",
+            "--port",
+            "6380",
+            "--archive-path",
+            "/tmp/redlike.rdb",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            "Config { address: 127.0.0.2, port: 6380, archive_path: Some(\"/tmp/redlike.rdb\"), auth_password: None }",
+            format!("{:?}", config)
+        );
+    }
 
     #[test]
     fn defaults_apply_when_no_args_or_env_are_present() {
