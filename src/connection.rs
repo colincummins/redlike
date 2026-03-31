@@ -49,7 +49,11 @@ where
         }
     }
 
-    async fn authenticate_connection(&mut self, password: Vec<u8>) -> ProcessOutcome {
+    fn is_authorized(&self) -> bool {
+        self.auth_password.as_ref().is_none() || self.authenticated
+    }
+
+    fn authenticate_connection(&mut self, password: Vec<u8>) -> ProcessOutcome {
         match self.auth_password.as_ref() {
             None => ProcessOutcome::Respond(Frame::SimpleError(
                 "AUTH called without any password configured".into(),
@@ -156,7 +160,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt, Sink, sink, split};
+
+    use secrecy::SecretBox;
 
     use super::*;
 
@@ -177,6 +185,13 @@ mod tests {
             dummy_shutdown_token(),
             dummy_auth_password(),
         )
+    }
+
+    fn setup_pwd_protected_connection(password: String) -> Connection<tokio::io::Empty, Sink> {
+        let mut connection = setup_dummy_connection();
+        connection.auth_password =
+            Arc::new(Some(SecretBox::new(Box::new(password.as_bytes().to_vec()))));
+        connection
     }
 
     mod process_command {
@@ -412,7 +427,89 @@ mod tests {
     }
 
     mod auth {
+
         use super::*;
+
+        #[tokio::test]
+        async fn no_password_configured_is_authorized() {
+            let connection = setup_dummy_connection();
+            assert!(connection.is_authorized());
+        }
+
+        #[tokio::test]
+        async fn password_configured_without_authentication_is_not_authorized() {
+            let connection = setup_pwd_protected_connection("my_password".into());
+            assert!(!connection.is_authorized());
+        }
+
+        #[tokio::test]
+        async fn password_configured_with_authentication_is_authorized() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+            connection.authenticated = true;
+            assert!(connection.is_authorized());
+        }
+
+        #[tokio::test]
+        async fn auth_without_configured_password_returns_error() {
+            let mut connection = setup_dummy_connection();
+            assert_eq!(
+                connection.authenticate_connection("my_password".into()),
+                ProcessOutcome::Respond(Frame::SimpleError(
+                    "AUTH called without any password configured".into()
+                ))
+            )
+        }
+
+        #[tokio::test]
+        async fn invalid_auth_returns_error() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+            assert_eq!(
+                connection.authenticate_connection("wrong_password".into()),
+                ProcessOutcome::Respond(Frame::SimpleError("AUTH invalid password".into()))
+            )
+        }
+
+        #[tokio::test]
+        async fn valid_auth_sets_authenticated_on_unauthenticated_connection() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+            assert_eq!(
+                connection.authenticate_connection("my_password".into()),
+                ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
+            );
+            assert!(connection.authenticated);
+        }
+
+        #[tokio::test]
+        async fn valid_auth_keeps_authenticated_connection_authenticated() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+            connection.authenticated = true;
+            assert_eq!(
+                connection.authenticate_connection("my_password".into()),
+                ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
+            );
+            assert!(connection.authenticated);
+        }
+
+        #[tokio::test]
+        async fn invalid_auth_keeps_authenticated_connection_authenticated() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+            connection.authenticated = true;
+            assert_eq!(
+                connection.authenticate_connection("wrong_password".into()),
+                ProcessOutcome::Respond(Frame::SimpleError("AUTH invalid password".into()))
+            );
+            assert!(connection.authenticated);
+        }
+
+        #[tokio::test]
+        async fn invalid_auth_keeps_unauthenticated_connection_unauthenticated() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+            assert_eq!(
+                connection.authenticate_connection("wrong_password".into()),
+                ProcessOutcome::Respond(Frame::SimpleError("AUTH invalid password".into()))
+            );
+            assert!(!connection.authenticated);
+        }
     }
 
     mod io {
