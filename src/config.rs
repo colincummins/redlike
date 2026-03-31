@@ -6,13 +6,13 @@ use std::{net::IpAddr, path::PathBuf, sync::Arc};
 #[derive(Parser)]
 struct RawConfig {
     #[arg(short, long, env, default_value = "127.0.0.1")]
-    pub address: IpAddr,
+    address: IpAddr,
     #[arg(short, long, env, default_value = "6379", value_parser = clap::value_parser!(u16).range(1024..=65535))]
-    pub port: u16,
+    port: u16,
     #[arg(short = 'r', long, env, default_value = None)]
-    pub archive_path: Option<std::path::PathBuf>,
+    archive_path: Option<std::path::PathBuf>,
     #[arg(long, env = "AUTH_PASSWORD", hide_env_values = true)]
-    pub auth_password: Option<String>,
+    auth_password: Option<String>,
 }
 
 pub struct Config {
