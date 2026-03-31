@@ -70,7 +70,19 @@ where
         }
     }
 
+    fn can_execute(&self, command: &Command) -> bool {
+        matches!(
+            command,
+            Command::AUTH { .. } | Command::PING | Command::QUIT | Command::NOOP
+        ) || self.is_authorized()
+    }
+
     async fn process_command(&mut self, command: Command) -> ProcessOutcome {
+        if !self.can_execute(&command) {
+            return ProcessOutcome::Respond(Frame::SimpleError(
+                "NOAUTH Authentication required".into(),
+            ));
+        }
         match command {
             Command::NOOP => ProcessOutcome::Noop,
             Command::QUIT => ProcessOutcome::Quit,
@@ -93,7 +105,7 @@ where
                 ProcessOutcome::Respond(Frame::Integer(self.store.ttl(key).await))
             }
             //TODO: Implement handling
-            Command::AUTH { key: _ } => ProcessOutcome::Respond(Frame::SimpleString("OK".into())),
+            Command::AUTH { key } => self.authenticate_connection(key),
         }
     }
 
@@ -512,6 +524,148 @@ mod tests {
         }
     }
 
+    mod authorization {
+        use super::*;
+
+        fn assert_noauth(response: ProcessOutcome) {
+            assert_eq!(
+                response,
+                ProcessOutcome::Respond(Frame::SimpleError(
+                    "NOAUTH Authentication required".into()
+                ))
+            );
+        }
+
+        #[tokio::test]
+        async fn protected_command_without_password_configured_executes() {
+            let mut connection = setup_dummy_connection();
+
+            let response = connection
+                .process_command(Command::SET {
+                    key: "mykey".into(),
+                    value: "myvalue".into(),
+                })
+                .await;
+
+            assert_eq!(
+                response,
+                ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
+            );
+        }
+
+        #[tokio::test]
+        async fn protected_command_on_unauthenticated_password_protected_connection_returns_noauth()
+        {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+
+            let response = connection
+                .process_command(Command::GET {
+                    key: "mykey".into(),
+                })
+                .await;
+
+            assert_noauth(response);
+        }
+
+        #[tokio::test]
+        async fn protected_command_on_authenticated_password_protected_connection_executes() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+            connection.authenticated = true;
+
+            let response = connection
+                .process_command(Command::SET {
+                    key: "mykey".into(),
+                    value: "myvalue".into(),
+                })
+                .await;
+
+            assert_eq!(
+                response,
+                ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
+            );
+        }
+
+        #[tokio::test]
+        async fn ping_is_allowed_without_authentication() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+
+            let response = connection.process_command(Command::PING).await;
+
+            assert_eq!(
+                response,
+                ProcessOutcome::Respond(Frame::SimpleString("PONG".into()))
+            );
+        }
+
+        #[tokio::test]
+        async fn noop_is_allowed_without_authentication() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+
+            let response = connection.process_command(Command::NOOP).await;
+
+            assert_eq!(response, ProcessOutcome::Noop);
+        }
+
+        #[tokio::test]
+        async fn quit_is_allowed_without_authentication() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+
+            let response = connection.process_command(Command::QUIT).await;
+
+            assert_eq!(response, ProcessOutcome::Quit);
+        }
+
+        #[tokio::test]
+        async fn valid_auth_allows_following_protected_command() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+
+            let auth_response = connection
+                .process_command(Command::AUTH {
+                    key: "my_password".into(),
+                })
+                .await;
+            assert_eq!(
+                auth_response,
+                ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
+            );
+
+            let command_response = connection
+                .process_command(Command::SET {
+                    key: "mykey".into(),
+                    value: "myvalue".into(),
+                })
+                .await;
+
+            assert_eq!(
+                command_response,
+                ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
+            );
+        }
+
+        #[tokio::test]
+        async fn invalid_auth_does_not_allow_following_protected_command() {
+            let mut connection = setup_pwd_protected_connection("my_password".into());
+
+            let auth_response = connection
+                .process_command(Command::AUTH {
+                    key: "wrong_password".into(),
+                })
+                .await;
+            assert_eq!(
+                auth_response,
+                ProcessOutcome::Respond(Frame::SimpleError("AUTH invalid password".into()))
+            );
+
+            let command_response = connection
+                .process_command(Command::GET {
+                    key: "mykey".into(),
+                })
+                .await;
+
+            assert_noauth(command_response);
+        }
+    }
+
     mod io {
         use super::*;
 
@@ -519,6 +673,29 @@ mod tests {
             call: &'a [u8],
             response: &'a [u8],
             expected: &'a str,
+        }
+
+        async fn setup_io_connection(
+            auth_password: SharedAuthPassword,
+        ) -> (BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>, BufWriter<tokio::io::WriteHalf<tokio::io::DuplexStream>>, tokio::task::JoinHandle<Result<(), Error>>)
+        {
+            let (client, server) = tokio::io::duplex(128);
+            let (reader, writer) = split(server);
+            let store = Store::new();
+            let mut conn = Connection::new(
+                reader,
+                writer,
+                store,
+                dummy_shutdown_token(),
+                auth_password,
+            );
+
+            let (reader, writer) = split(client);
+            let reader = BufReader::new(reader);
+            let writer = BufWriter::new(writer);
+            let handle = tokio::spawn(async move { conn.run().await });
+
+            (reader, writer, handle)
         }
 
         #[tokio::test]
@@ -718,6 +895,102 @@ mod tests {
                 "QUIT should close connection"
             );
 
+            handle.await.unwrap().unwrap();
+        }
+
+        #[tokio::test]
+        async fn e2e_run_blocks_protected_commands_until_authenticated() {
+            let (mut reader, mut writer, handle) = setup_io_connection(Arc::new(Some(
+                SecretBox::new(Box::new(b"my_password".to_vec())),
+            )))
+            .await;
+
+            writer
+                .write_all(b"*2\r\n$3\r\nGET\r\n$5\r\nmykey\r\n")
+                .await
+                .unwrap();
+            writer.flush().await.unwrap();
+
+            let mut read_buffer = [0; 33];
+            reader.read_exact(&mut read_buffer).await.unwrap();
+            assert_eq!(&read_buffer, b"-NOAUTH Authentication required\r\n");
+
+            writer.write_all(b"*1\r\n$4\r\nQUIT\r\n").await.unwrap();
+            writer.flush().await.unwrap();
+            handle.await.unwrap().unwrap();
+        }
+
+        #[tokio::test]
+        async fn e2e_run_rejects_invalid_auth_and_keeps_protected_commands_blocked() {
+            let (mut reader, mut writer, handle) = setup_io_connection(Arc::new(Some(
+                SecretBox::new(Box::new(b"my_password".to_vec())),
+            )))
+            .await;
+
+            writer
+                .write_all(b"*2\r\n$4\r\nAUTH\r\n$14\r\nwrong_password\r\n")
+                .await
+                .unwrap();
+            writer.flush().await.unwrap();
+
+            let mut auth_buffer = [0; 24];
+            reader.read_exact(&mut auth_buffer).await.unwrap();
+            assert_eq!(&auth_buffer, b"-AUTH invalid password\r\n");
+
+            writer
+                .write_all(b"*3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n")
+                .await
+                .unwrap();
+            writer.flush().await.unwrap();
+
+            let mut noauth_buffer = [0; 33];
+            reader.read_exact(&mut noauth_buffer).await.unwrap();
+            assert_eq!(&noauth_buffer, b"-NOAUTH Authentication required\r\n");
+
+            writer.write_all(b"*1\r\n$4\r\nQUIT\r\n").await.unwrap();
+            writer.flush().await.unwrap();
+            handle.await.unwrap().unwrap();
+        }
+
+        #[tokio::test]
+        async fn e2e_run_accepts_valid_auth_and_then_allows_protected_commands() {
+            let (mut reader, mut writer, handle) = setup_io_connection(Arc::new(Some(
+                SecretBox::new(Box::new(b"my_password".to_vec())),
+            )))
+            .await;
+
+            writer
+                .write_all(b"*2\r\n$4\r\nAUTH\r\n$11\r\nmy_password\r\n")
+                .await
+                .unwrap();
+            writer.flush().await.unwrap();
+
+            let mut auth_buffer = [0; 5];
+            reader.read_exact(&mut auth_buffer).await.unwrap();
+            assert_eq!(&auth_buffer, b"+OK\r\n");
+
+            writer
+                .write_all(b"*3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n")
+                .await
+                .unwrap();
+            writer.flush().await.unwrap();
+
+            let mut set_buffer = [0; 5];
+            reader.read_exact(&mut set_buffer).await.unwrap();
+            assert_eq!(&set_buffer, b"+OK\r\n");
+
+            writer
+                .write_all(b"*2\r\n$3\r\nGET\r\n$5\r\nmykey\r\n")
+                .await
+                .unwrap();
+            writer.flush().await.unwrap();
+
+            let mut get_buffer = [0; 13];
+            reader.read_exact(&mut get_buffer).await.unwrap();
+            assert_eq!(&get_buffer, b"$7\r\nmyvalue\r\n");
+
+            writer.write_all(b"*1\r\n$4\r\nQUIT\r\n").await.unwrap();
+            writer.flush().await.unwrap();
             handle.await.unwrap().unwrap();
         }
     }
