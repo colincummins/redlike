@@ -3,6 +3,9 @@ use core::fmt;
 use secrecy::SecretBox;
 use std::{net::IpAddr, path::PathBuf, sync::Arc};
 
+pub type AuthPassword = Arc<SecretBox<Vec<u8>>>;
+pub type SharedAuthPassword = Arc<Option<AuthPassword>>;
+
 #[derive(Parser)]
 struct RawConfig {
     #[arg(short, long, env, default_value = "127.0.0.1")]
@@ -19,7 +22,7 @@ pub struct Config {
     pub address: IpAddr,
     pub port: u16,
     pub archive_path: Option<PathBuf>,
-    pub auth_password: Option<Arc<SecretBox<Vec<u8>>>>,
+    pub auth_password: Option<AuthPassword>,
 }
 
 impl Config {

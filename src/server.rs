@@ -6,10 +6,9 @@ use std::time::Duration;
 
 use crate::archive::save;
 use crate::archive::{ArchiveError, load};
-use crate::config::Config;
+use crate::config::{Config, SharedAuthPassword};
 use crate::connection::Connection;
 use crate::store::Store;
-use secrecy::SecretBox;
 use tokio::net::TcpListener;
 use tokio::select;
 use tokio::task::{JoinHandle, JoinSet};
@@ -60,7 +59,7 @@ pub async fn server_from_listener(
     store: Store,
     archive_path: Option<PathBuf>,
     shutdown_token: CancellationToken,
-    auth_password: Arc<Option<Arc<SecretBox<Vec<u8>>>>>,
+    auth_password: SharedAuthPassword,
 ) -> ServerResult<()> {
     let mut open_connections = JoinSet::new();
 

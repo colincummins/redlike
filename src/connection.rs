@@ -1,11 +1,10 @@
 #![allow(clippy::upper_case_acronyms)]
 use crate::command::Command;
+use crate::config::SharedAuthPassword;
 use crate::error::Error;
 use crate::frame::Frame;
 use crate::parser::{ParseResult, Parser};
 use crate::store::Store;
-use secrecy::SecretBox;
-use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -15,7 +14,7 @@ pub struct Connection<R, W> {
     writer: BufWriter<W>,
     store: Store,
     shutdown_token: CancellationToken,
-    auth_password: Arc<Option<Arc<SecretBox<Vec<u8>>>>>,
+    auth_password: SharedAuthPassword,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -35,7 +34,7 @@ where
         writer: W,
         store: Store,
         shutdown_token: CancellationToken,
-        auth_password: Arc<Option<Arc<SecretBox<Vec<u8>>>>>,
+        auth_password: SharedAuthPassword,
     ) -> Self {
         Connection {
             reader: BufReader::new(reader),
@@ -144,8 +143,8 @@ mod tests {
         CancellationToken::new()
     }
 
-    fn dummy_auth_password() -> Arc<Option<Arc<SecretBox<Vec<u8>>>>> {
-        Arc::new(None)
+    fn dummy_auth_password() -> SharedAuthPassword {
+        SharedAuthPassword::new(None)
     }
 
     fn setup_dummy_connection() -> Connection<tokio::io::Empty, Sink> {
