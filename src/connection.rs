@@ -677,18 +677,16 @@ mod tests {
 
         async fn setup_io_connection(
             auth_password: SharedAuthPassword,
-        ) -> (BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>, BufWriter<tokio::io::WriteHalf<tokio::io::DuplexStream>>, tokio::task::JoinHandle<Result<(), Error>>)
-        {
+        ) -> (
+            BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+            BufWriter<tokio::io::WriteHalf<tokio::io::DuplexStream>>,
+            tokio::task::JoinHandle<Result<(), Error>>,
+        ) {
             let (client, server) = tokio::io::duplex(128);
             let (reader, writer) = split(server);
             let store = Store::new();
-            let mut conn = Connection::new(
-                reader,
-                writer,
-                store,
-                dummy_shutdown_token(),
-                auth_password,
-            );
+            let mut conn =
+                Connection::new(reader, writer, store, dummy_shutdown_token(), auth_password);
 
             let (reader, writer) = split(client);
             let reader = BufReader::new(reader);
