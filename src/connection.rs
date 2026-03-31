@@ -15,7 +15,7 @@ pub struct Connection<R, W> {
     store: Store,
     shutdown_token: CancellationToken,
     auth_password: SharedAuthPassword,
-    authorized: bool,
+    authenticated: bool,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -43,7 +43,7 @@ where
             store,
             shutdown_token,
             auth_password,
-            authorized: false,
+            authenticated: false,
         }
     }
 
