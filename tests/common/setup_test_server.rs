@@ -1,5 +1,5 @@
 use crate::common::server_error_to_io;
-use redlike::config::Config;
+use redlike::config::{Config, SharedAuthPassword};
 use redlike::server::run_server;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ pub async fn setup_test_server_with_archive(
         address: socket_addr.ip(),
         port: socket_addr.port(),
         archive_path,
-        auth_password: None,
+        auth_password: SharedAuthPassword::new(None),
     };
     let (addr, handle) = run_server(&config, shutdown_token.clone())
         .await

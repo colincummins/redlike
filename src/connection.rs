@@ -144,7 +144,7 @@ mod tests {
     }
 
     fn dummy_auth_password() -> SharedAuthPassword {
-        SharedAuthPassword::new(None)
+        std::sync::Arc::new(None)
     }
 
     fn setup_dummy_connection() -> Connection<tokio::io::Empty, Sink> {

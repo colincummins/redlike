@@ -1,7 +1,6 @@
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::archive::save;
@@ -137,13 +136,12 @@ pub async fn run_server(
         Some(path) => load(path).await.map_err(ServerError::Archive)?,
         None => Store::new(),
     };
-    let auth_password = Arc::new(config.auth_password.clone());
     let handle = tokio::spawn(server_from_listener(
         listener,
         store,
         config.archive_path.clone(),
         shutdown_token.clone(),
-        auth_password,
+        config.auth_password.clone(),
     ));
     Ok((addr, handle))
 }

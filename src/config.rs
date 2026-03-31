@@ -3,7 +3,7 @@ use core::fmt;
 use secrecy::SecretBox;
 use std::{net::IpAddr, path::PathBuf, sync::Arc};
 
-pub type AuthPassword = Arc<SecretBox<Vec<u8>>>;
+pub type AuthPassword = SecretBox<Vec<u8>>;
 pub type SharedAuthPassword = Arc<Option<AuthPassword>>;
 
 #[derive(Parser)]
@@ -22,7 +22,7 @@ pub struct Config {
     pub address: IpAddr,
     pub port: u16,
     pub archive_path: Option<PathBuf>,
-    pub auth_password: Option<AuthPassword>,
+    pub auth_password: SharedAuthPassword,
 }
 
 impl Config {
@@ -31,9 +31,10 @@ impl Config {
             address: raw.address,
             port: raw.port,
             archive_path: raw.archive_path,
-            auth_password: raw
-                .auth_password
-                .map(|p| Arc::new(SecretBox::new(Box::new(p.into_bytes())))),
+            auth_password: Arc::new(
+                raw.auth_password
+                    .map(|p| SecretBox::new(Box::new(p.into_bytes()))),
+            ),
         }
     }
 
@@ -48,7 +49,7 @@ impl Config {
 
 impl fmt::Debug for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let redacted_password = self.auth_password.as_ref().map(|_| "-----");
+        let redacted_password = self.auth_password.as_ref().as_ref().map(|_| "-----");
 
         f.debug_struct("Config")
             .field("address", &self.address)
