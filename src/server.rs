@@ -14,6 +14,8 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use tracing::info;
+
 #[derive(Debug)]
 pub enum ServerError {
     Io(std::io::Error),
@@ -132,9 +134,16 @@ pub async fn run_server(
     let addr = format!("{}:{}", config.address, config.port);
     let listener = TcpListener::bind(addr).await?;
     let addr: SocketAddr = listener.local_addr()?;
+    info!(%addr, "listener bound");
     let store: Store = match config.archive_path.clone() {
-        Some(path) => load(path).await.map_err(ServerError::Archive)?,
-        None => Store::new(),
+        Some(path) => {
+            info!(path = %path.display(), "loading store from archive");
+            load(path).await.map_err(ServerError::Archive)?
+        }
+        None => {
+            info!("starting with empty in-memory store");
+            Store::new()
+        }
     };
     let handle = tokio::spawn(server_from_listener(
         listener,
@@ -143,5 +152,6 @@ pub async fn run_server(
         shutdown_token.clone(),
         config.auth_password.clone(),
     ));
+    info!(%addr, "accept loop task started successfully");
     Ok((addr, handle))
 }
