@@ -27,6 +27,7 @@ cargo run -- --address 127.0.0.1 --port 6379 --archive-path /tmp/redlike.rdb --a
 
 If no auth password is configured, all commands are available without authentication.
 If an auth password is configured, clients may still use `PING`, `AUTH`, `QUIT`, and blank inline commands before authenticating, but data commands return `-NOAUTH Authentication required`.
+Authentication does not encrypt network traffic. Passwords and command data are still sent in plaintext unless Redlike is run behind a TLS-terminating proxy or tunnel.
 
 ## Archive Persistence
 
