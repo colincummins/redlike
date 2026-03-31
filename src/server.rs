@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::archive::save;
 use crate::archive::{ArchiveError, load};
-use crate::config::Config;
+use crate::config::{Config, SharedAuthPassword};
 use crate::connection::Connection;
 use crate::store::Store;
 use tokio::net::TcpListener;
@@ -18,6 +18,8 @@ use tokio_util::sync::CancellationToken;
 pub enum ServerError {
     Io(std::io::Error),
     Archive(ArchiveError),
+    InvalidAuthFile,
+    UnreadableAuthFile(std::io::Error),
 }
 
 type ServerResult<T> = std::result::Result<T, ServerError>;
@@ -27,6 +29,12 @@ impl fmt::Display for ServerError {
         match self {
             ServerError::Io(e) => write!(f, "Server IO Error {}", e),
             ServerError::Archive(e) => write!(f, "Archive Error {}", e),
+            ServerError::InvalidAuthFile => {
+                write!(f, "Password file contains unsupported contents")
+            }
+            ServerError::UnreadableAuthFile(e) => {
+                write!(f, "Unreadable or missing password file - {}", e)
+            }
         }
     }
 }
@@ -50,6 +58,7 @@ pub async fn server_from_listener(
     store: Store,
     archive_path: Option<PathBuf>,
     shutdown_token: CancellationToken,
+    auth_password: SharedAuthPassword,
 ) -> ServerResult<()> {
     let mut open_connections = JoinSet::new();
 
@@ -60,6 +69,7 @@ pub async fn server_from_listener(
                     Ok((mut socket, _addr)) => {
                         let store = store.clone();
                         let connection_shutdown = shutdown_token.clone();
+                        let auth_password = auth_password.clone();
                         open_connections.spawn(async move {
                             let (read_half, write_half) = socket.split();
                             let mut conn = Connection::new(
@@ -67,6 +77,7 @@ pub async fn server_from_listener(
                                 write_half,
                                 store,
                                 connection_shutdown,
+                                auth_password
                             );
                             if let Err(e) = conn.run().await {
                                 println!("connection failed: {:?}", e)
@@ -130,6 +141,7 @@ pub async fn run_server(
         store,
         config.archive_path.clone(),
         shutdown_token.clone(),
+        config.auth_password.clone(),
     ));
     Ok((addr, handle))
 }

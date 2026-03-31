@@ -1,13 +1,14 @@
 # redlike
 Redlike is a concurrent, in-memory key-value store that communicates with clients over TCP using RESP, with optional inline terminal-style commands.
 
-Implemented commands include `PING`, `GET`, `SET`, `DEL`, `EXPIRE`, `TTL`, and `QUIT`.
+Implemented commands include `PING`, `AUTH`, `GET`, `SET`, `DEL`, `EXPIRE`, `TTL`, and `QUIT`.
 Expired keys are treated as missing on reads, and a background sweeper removes expired entries from the store.
 When configured with an archive path, the server loads persisted state on startup and saves it again during graceful shutdown.
+When configured with an authentication password, clients must successfully authenticate before using data commands.
 
 The project is covered by unit tests, including deterministic Tokio paused-time tests for expiration and TTL behavior.
 
-# Running The Server
+# Running the Server
 
 By default, the server listens on `127.0.0.1:6379`.
 
@@ -16,12 +17,17 @@ Configuration is available through CLI flags or environment variables:
 * `--address`, `-a`, or `ADDRESS`
 * `--port`, `-p`, or `PORT`
 * `--archive-path`, `-r`, or `ARCHIVE_PATH`
+* `--auth-password` or `AUTH_PASSWORD`
 
 Example:
 
 ```text
-cargo run -- --address 127.0.0.1 --port 6379 --archive-path /tmp/redlike.rdb
+cargo run -- --address 127.0.0.1 --port 6379 --archive-path /tmp/redlike.rdb --auth-password secret123
 ```
+
+If no auth password is configured, all commands are available without authentication.
+If an auth password is configured, clients may still use `PING`, `AUTH`, `QUIT`, and blank inline commands before authenticating, but data commands return `-NOAUTH Authentication required`.
+Authentication does not encrypt network traffic. Passwords and command data are still sent in plaintext unless Redlike is run behind a TLS-terminating proxy or tunnel.
 
 ## Archive Persistence
 
@@ -73,6 +79,7 @@ Examples:
 
 ```text
 *1\r\n$4\r\nPING\r\n
+*2\r\n$4\r\nAUTH\r\n$11\r\nmy_password\r\n
 *2\r\n$3\r\nGET\r\n$5\r\nmykey\r\n
 *3\r\n$3\r\nSET\r\n$5\r\nmykey\r\n$7\r\nmyvalue\r\n
 *3\r\n$6\r\nEXPIRE\r\n$5\r\nmykey\r\n$2\r\n60\r\n
@@ -89,6 +96,7 @@ Examples:
 
 ```text
 PING\n
+AUTH my_password\n
 GET mykey\n
 SET mykey myvalue\n
 EXPIRE mykey 60\n
@@ -120,6 +128,42 @@ Response:
 ```text
 +PONG\r\n
 ```
+
+---
+
+### `AUTH password`
+
+Request:
+
+```text
+*2\r\n$4\r\nAUTH\r\n$11\r\nmy_password\r\n
+```
+
+or
+
+```text
+AUTH my_password\n
+```
+
+Response when the password is correct:
+
+```text
++OK\r\n
+```
+
+Response when the password is incorrect:
+
+```text
+-AUTH invalid password\r\n
+```
+
+Response when the server was started without an auth password configured:
+
+```text
+-AUTH called without any password configured\r\n
+```
+
+After a successful `AUTH`, the connection may execute protected commands such as `GET`, `SET`, `DEL`, `EXPIRE`, and `TTL`. Authentication is scoped to the current TCP connection.
 
 ---
 
@@ -254,6 +298,12 @@ The server closes the connection without sending a response frame.
 ---
 
 ## Error Handling
+
+When the server requires authentication and a client sends a protected command before successfully authenticating, the response is:
+
+```text
+-NOAUTH Authentication required\r\n
+```
 
 For valid request frames that contain an unknown command or the wrong number of arguments, the server replies with a RESP simple error:
 

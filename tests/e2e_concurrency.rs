@@ -1,9 +1,9 @@
 mod common;
+use common::server_error_to_io;
 use common::test_client::TestClient;
-use redlike::config::Config;
+use redlike::config::{Config, SharedAuthPassword};
 use redlike::frame::Frame;
-use redlike::server::{ServerError, run_server};
-use tokio::io;
+use redlike::server::run_server;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -51,6 +51,7 @@ async fn get_set_del_same_record() -> tokio::io::Result<()> {
         address: "127.0.0.1".parse().unwrap(),
         port: 0,
         archive_path: None,
+        auth_password: SharedAuthPassword::new(None),
     };
     let (addr, handle) = run_server(&config, shutdown)
         .await
@@ -68,11 +69,4 @@ async fn get_set_del_same_record() -> tokio::io::Result<()> {
 
     handle.abort();
     Ok(())
-}
-
-fn server_error_to_io(err: ServerError) -> io::Error {
-    match err {
-        ServerError::Io(err) => err,
-        ServerError::Archive(err) => io::Error::other(err),
-    }
 }

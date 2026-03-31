@@ -1,19 +1,67 @@
-use std::net::IpAddr;
-
 use clap::Parser;
+use core::fmt;
+use secrecy::SecretBox;
+use std::{net::IpAddr, path::PathBuf, sync::Arc};
 
-#[derive(Parser, Debug)]
-pub struct Config {
+pub type AuthPassword = SecretBox<Vec<u8>>;
+pub type SharedAuthPassword = Arc<Option<AuthPassword>>;
+
+#[derive(Parser)]
+struct RawConfig {
     #[arg(short, long, env, default_value = "127.0.0.1")]
-    pub address: IpAddr,
+    address: IpAddr,
     #[arg(short, long, env, default_value = "6379", value_parser = clap::value_parser!(u16).range(1024..=65535))]
-    pub port: u16,
+    port: u16,
     #[arg(short = 'r', long, env, default_value = None)]
-    pub archive_path: Option<std::path::PathBuf>,
+    archive_path: Option<std::path::PathBuf>,
+    #[arg(long, env = "AUTH_PASSWORD", hide_env_values = true)]
+    auth_password: Option<String>,
+}
+
+pub struct Config {
+    pub address: IpAddr,
+    pub port: u16,
+    pub archive_path: Option<PathBuf>,
+    pub auth_password: SharedAuthPassword,
+}
+
+impl Config {
+    fn from_raw(raw: RawConfig) -> Self {
+        Config {
+            address: raw.address,
+            port: raw.port,
+            archive_path: raw.archive_path,
+            auth_password: Arc::new(
+                raw.auth_password
+                    .map(|p| SecretBox::new(Box::new(p.into_bytes()))),
+            ),
+        }
+    }
+
+    pub fn try_parse_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        RawConfig::try_parse_from(itr).map(Self::from_raw)
+    }
+}
+
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_password = self.auth_password.as_ref().as_ref().map(|_| "-----");
+
+        f.debug_struct("Config")
+            .field("address", &self.address)
+            .field("port", &self.port)
+            .field("archive_path", &self.archive_path)
+            .field("auth_password", &redacted_password)
+            .finish()
+    }
 }
 
 pub fn get_config() -> Config {
-    Config::parse()
+    Config::from_raw(RawConfig::parse())
 }
 
 #[cfg(test)]
@@ -37,6 +85,48 @@ mod tests {
         unsafe {
             std::env::remove_var(key);
         }
+    }
+    #[test]
+    fn debug_formatting_hides_password() {
+        let config = Config::try_parse_from([
+            "redlike",
+            "--address",
+            "127.0.0.2",
+            "--port",
+            "6380",
+            "--archive-path",
+            "/tmp/redlike.rdb",
+            "--auth-password",
+            "test_password",
+        ])
+        .unwrap();
+
+        let debug = format!("{:?}", config);
+
+        assert!(!debug.contains("test_password"));
+        assert_eq!(
+            "Config { address: 127.0.0.2, port: 6380, archive_path: Some(\"/tmp/redlike.rdb\"), auth_password: Some(\"-----\") }",
+            debug
+        )
+    }
+
+    #[test]
+    fn debug_formatting_shows_none_when_password_is_absent() {
+        let config = Config::try_parse_from([
+            "redlike",
+            "--address",
+            "127.0.0.2",
+            "--port",
+            "6380",
+            "--archive-path",
+            "/tmp/redlike.rdb",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            "Config { address: 127.0.0.2, port: 6380, archive_path: Some(\"/tmp/redlike.rdb\"), auth_password: None }",
+            format!("{:?}", config)
+        );
     }
 
     #[test]
