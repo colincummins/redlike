@@ -4,6 +4,8 @@ use crate::error::Error;
 use crate::frame::Frame;
 use crate::parser::{ParseResult, Parser};
 use crate::store::Store;
+use secrecy::SecretBox;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -13,6 +15,7 @@ pub struct Connection<R, W> {
     writer: BufWriter<W>,
     store: Store,
     shutdown_token: CancellationToken,
+    auth_password: Arc<Option<Arc<SecretBox<Vec<u8>>>>>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -27,12 +30,19 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    pub fn new(reader: R, writer: W, store: Store, shutdown_token: CancellationToken) -> Self {
+    pub fn new(
+        reader: R,
+        writer: W,
+        store: Store,
+        shutdown_token: CancellationToken,
+        auth_password: Arc<Option<Arc<SecretBox<Vec<u8>>>>>,
+    ) -> Self {
         Connection {
             reader: BufReader::new(reader),
             writer: BufWriter::new(writer),
             store,
             shutdown_token,
+            auth_password,
         }
     }
 
@@ -134,9 +144,19 @@ mod tests {
         CancellationToken::new()
     }
 
+    fn dummy_auth_password() -> Arc<Option<Arc<SecretBox<Vec<u8>>>>> {
+        Arc::new(None)
+    }
+
     fn setup_dummy_connection() -> Connection<tokio::io::Empty, Sink> {
         let store: Store = Store::new();
-        Connection::new(tokio::io::empty(), sink(), store, dummy_shutdown_token())
+        Connection::new(
+            tokio::io::empty(),
+            sink(),
+            store,
+            dummy_shutdown_token(),
+            dummy_auth_password(),
+        )
     }
 
     #[tokio::test]
@@ -372,7 +392,13 @@ mod tests {
         let (client, server) = tokio::io::duplex(64);
         let mut client_reader = BufReader::new(client);
         let store = Store::new();
-        let mut conn = Connection::new(tokio::io::empty(), server, store, dummy_shutdown_token());
+        let mut conn = Connection::new(
+            tokio::io::empty(),
+            server,
+            store,
+            dummy_shutdown_token(),
+            dummy_auth_password(),
+        );
         conn.send_response(Frame::SimpleString("OK".into()))
             .await
             .unwrap();
@@ -516,7 +542,13 @@ mod tests {
         let (client, server) = tokio::io::duplex(128);
         let (reader, writer) = split(server);
         let store = Store::new();
-        let mut conn = Connection::new(reader, writer, store, dummy_shutdown_token());
+        let mut conn = Connection::new(
+            reader,
+            writer,
+            store,
+            dummy_shutdown_token(),
+            dummy_auth_password(),
+        );
 
         let (reader, writer) = split(client);
 

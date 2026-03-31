@@ -1,10 +1,10 @@
-use core::fmt;
-use std::net::IpAddr;
-
 use clap::Parser;
+use core::fmt;
+use secrecy::SecretBox;
+use std::{net::IpAddr, path::PathBuf, sync::Arc};
 
 #[derive(Parser)]
-pub struct Config {
+struct RawConfig {
     #[arg(short, long, env, default_value = "127.0.0.1")]
     pub address: IpAddr,
     #[arg(short, long, env, default_value = "6379", value_parser = clap::value_parser!(u16).range(1024..=65535))]
@@ -13,6 +13,34 @@ pub struct Config {
     pub archive_path: Option<std::path::PathBuf>,
     #[arg(long, env = "AUTH_PASSWORD", hide_env_values = true)]
     pub auth_password: Option<String>,
+}
+
+pub struct Config {
+    pub address: IpAddr,
+    pub port: u16,
+    pub archive_path: Option<PathBuf>,
+    pub auth_password: Option<Arc<SecretBox<Vec<u8>>>>,
+}
+
+impl Config {
+    fn from_raw(raw: RawConfig) -> Self {
+        Config {
+            address: raw.address,
+            port: raw.port,
+            archive_path: raw.archive_path,
+            auth_password: raw
+                .auth_password
+                .map(|p| Arc::new(SecretBox::new(Box::new(p.into_bytes())))),
+        }
+    }
+
+    pub fn try_parse_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        RawConfig::try_parse_from(itr).map(Self::from_raw)
+    }
 }
 
 impl fmt::Debug for Config {
@@ -29,7 +57,7 @@ impl fmt::Debug for Config {
 }
 
 pub fn get_config() -> Config {
-    Config::parse()
+    Config::from_raw(RawConfig::parse())
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::archive::save;
@@ -8,6 +9,7 @@ use crate::archive::{ArchiveError, load};
 use crate::config::Config;
 use crate::connection::Connection;
 use crate::store::Store;
+use secrecy::SecretBox;
 use tokio::net::TcpListener;
 use tokio::select;
 use tokio::task::{JoinHandle, JoinSet};
@@ -58,6 +60,7 @@ pub async fn server_from_listener(
     store: Store,
     archive_path: Option<PathBuf>,
     shutdown_token: CancellationToken,
+    auth_password: Arc<Option<Arc<SecretBox<Vec<u8>>>>>,
 ) -> ServerResult<()> {
     let mut open_connections = JoinSet::new();
 
@@ -68,6 +71,7 @@ pub async fn server_from_listener(
                     Ok((mut socket, _addr)) => {
                         let store = store.clone();
                         let connection_shutdown = shutdown_token.clone();
+                        let auth_password = auth_password.clone();
                         open_connections.spawn(async move {
                             let (read_half, write_half) = socket.split();
                             let mut conn = Connection::new(
@@ -75,6 +79,7 @@ pub async fn server_from_listener(
                                 write_half,
                                 store,
                                 connection_shutdown,
+                                auth_password
                             );
                             if let Err(e) = conn.run().await {
                                 println!("connection failed: {:?}", e)
@@ -133,11 +138,13 @@ pub async fn run_server(
         Some(path) => load(path).await.map_err(ServerError::Archive)?,
         None => Store::new(),
     };
+    let auth_password = Arc::new(config.auth_password.clone());
     let handle = tokio::spawn(server_from_listener(
         listener,
         store,
         config.archive_path.clone(),
         shutdown_token.clone(),
+        auth_password,
     ));
     Ok((addr, handle))
 }
