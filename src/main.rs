@@ -1,7 +1,7 @@
 use redlike::config::get_config;
 use redlike::server::run_server;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, subscriber};
+use tracing::info;
 
 #[tokio::main]
 #[allow(unused_variables)]
