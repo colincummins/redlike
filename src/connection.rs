@@ -97,6 +97,7 @@ where
 
     async fn process_command(&mut self, command: Command) -> ProcessOutcome {
         if !self.can_execute(&command) {
+            warn!(command = command.name(), "unauthorized command");
             return ProcessOutcome::Respond(Frame::SimpleError(
                 "NOAUTH Authentication required".into(),
             ));
@@ -208,7 +209,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, sync::Arc};
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Arc,
+    };
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt, Sink, sink, split};
 
