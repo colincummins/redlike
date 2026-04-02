@@ -150,6 +150,22 @@ impl TryFrom<Frame> for Command {
     }
 }
 
+impl Command {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Command::PING => "PING",
+            Command::GET { .. } => "GET",
+            Command::SET { .. } => "SET",
+            Command::DEL { .. } => "DEL",
+            Command::EXPIRE { .. } => "EXPIRE",
+            Command::TTL { .. } => "TTL",
+            Command::QUIT => "QUIT",
+            Command::NOOP => "NOOP",
+            Command::AUTH { .. } => "GET",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
