@@ -80,7 +80,8 @@ pub async fn server_from_listener(
                                 write_half,
                                 store,
                                 connection_shutdown,
-                                auth_password
+                                auth_password,
+                                addr,
                             );
                             if let Err(e) = conn.run().await {
                                 warn!(?e, "internal connection failure");
