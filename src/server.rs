@@ -14,6 +14,8 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use tracing::{info, warn};
+
 #[derive(Debug)]
 pub enum ServerError {
     Io(std::io::Error),
@@ -66,7 +68,8 @@ pub async fn server_from_listener(
         select! {
             connection_result = listener.accept() => {
                 match connection_result {
-                    Ok((mut socket, _addr)) => {
+                    Ok((mut socket, addr)) => {
+                        info!(%addr, "accepted connection");
                         let store = store.clone();
                         let connection_shutdown = shutdown_token.clone();
                         let auth_password = auth_password.clone();
@@ -77,22 +80,25 @@ pub async fn server_from_listener(
                                 write_half,
                                 store,
                                 connection_shutdown,
-                                auth_password
+                                auth_password,
+                                addr,
                             );
                             if let Err(e) = conn.run().await {
-                                println!("connection failed: {:?}", e)
+                                warn!(?e, "internal connection failure");
                             }
                         });
                     }
-                    Err(e) => println!("client couldn't connect: {:?}", e),
+                    Err(e) => warn!(?e, "listener could not accept client connection"),
                 };
             },
             join_result = open_connections.join_next(), if !open_connections.is_empty() => {
-                if let Some(Err(err)) = join_result {
-                    println!("connection task failed: {:?}", err);
+                if let Some(Err(e)) = join_result {
+                    warn!(?e, "connection failed to complete properly")
                 }
             },
-            _ = shutdown_token.cancelled() => {break;}
+            _ = shutdown_token.cancelled() => {
+                info!("server received shutdown signal");
+                break;}
         }
     }
 
@@ -101,25 +107,28 @@ pub async fn server_from_listener(
 
     let shutdown_result = timeout(Duration::from_secs(3), async {
         while let Some(join_result) = open_connections.join_next().await {
-            if let Err(err) = join_result {
-                println!("connection task failed: {:?}", err);
+            if let Err(e) = join_result {
+                warn!(?e, "connection failed to complete properly")
             }
         }
     })
     .await;
 
-    if shutdown_result.is_err() {
+    if let Err(e) = shutdown_result {
+        warn!(%e, "connection shutdown timed out - aborting remaining connections");
         open_connections.abort_all();
 
         while let Some(join_result) = open_connections.join_next().await {
-            if let Err(err) = join_result {
-                println!("connection task failed: {:?}", err);
+            if let Err(e) = join_result {
+                warn!(?e, "failed to abort a connection")
             }
         }
     }
 
     if let Some(p) = archive_path {
-        save(p, store).await?;
+        info!(p = %p.display(), "saving archive to path");
+        save(p.clone(), store).await?;
+        info!(p = %p.display(), "archiving successful");
     }
 
     Ok(())
@@ -132,9 +141,18 @@ pub async fn run_server(
     let addr = format!("{}:{}", config.address, config.port);
     let listener = TcpListener::bind(addr).await?;
     let addr: SocketAddr = listener.local_addr()?;
+    info!(%addr, "listener bound");
     let store: Store = match config.archive_path.clone() {
-        Some(path) => load(path).await.map_err(ServerError::Archive)?,
-        None => Store::new(),
+        Some(path) => {
+            info!(path = %path.display(), "loading store from archive");
+            let store = load(path.clone()).await.map_err(ServerError::Archive)?;
+            info!(path = %path.display(), "archive loaded successfully");
+            store
+        }
+        None => {
+            info!("no archive path provided - starting with empty in-memory store");
+            Store::new()
+        }
     };
     let handle = tokio::spawn(server_from_listener(
         listener,
@@ -143,5 +161,6 @@ pub async fn run_server(
         shutdown_token.clone(),
         config.auth_password.clone(),
     ));
+    info!(%addr, "accept loop task started successfully");
     Ok((addr, handle))
 }

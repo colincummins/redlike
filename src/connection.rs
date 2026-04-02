@@ -1,4 +1,7 @@
 #![allow(clippy::upper_case_acronyms)]
+use core::fmt;
+use std::net::SocketAddr;
+
 use crate::command::Command;
 use crate::config::SharedAuthPassword;
 use crate::error::Error;
@@ -10,6 +13,9 @@ use secrecy::ExposeSecret;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
+use tracing::instrument;
+use tracing::warn;
 
 pub struct Connection<R, W> {
     reader: BufReader<R>,
@@ -18,6 +24,15 @@ pub struct Connection<R, W> {
     shutdown_token: CancellationToken,
     auth_password: SharedAuthPassword,
     authenticated: bool,
+    addr: SocketAddr,
+}
+
+impl<R, W> fmt::Debug for Connection<R, W> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("connection")
+            .field("addr", &self.addr)
+            .finish()
+    }
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -38,6 +53,7 @@ where
         store: Store,
         shutdown_token: CancellationToken,
         auth_password: SharedAuthPassword,
+        addr: SocketAddr,
     ) -> Self {
         Connection {
             reader: BufReader::new(reader),
@@ -46,6 +62,7 @@ where
             shutdown_token,
             auth_password,
             authenticated: false,
+            addr,
         }
     }
 
@@ -64,6 +81,7 @@ where
                     ProcessOutcome::Respond(Frame::SimpleString("OK".into()))
                 }
                 false => {
+                    warn!("authentication failed");
                     ProcessOutcome::Respond(Frame::SimpleError("AUTH invalid password".into()))
                 }
             },
@@ -79,6 +97,7 @@ where
 
     async fn process_command(&mut self, command: Command) -> ProcessOutcome {
         if !self.can_execute(&command) {
+            warn!(command = command.name(), "unauthorized command");
             return ProcessOutcome::Respond(Frame::SimpleError(
                 "NOAUTH Authentication required".into(),
             ));
@@ -117,46 +136,64 @@ where
         Ok(())
     }
 
+    #[instrument(skip(self), fields(addr = %self.addr))]
     pub async fn run(&mut self) -> Result<(), Error> {
+        info!("connection started");
         let mut p = Parser::new();
         let mut buf = Vec::<u8>::new();
         loop {
             buf.clear();
             select! {
                 read_result = self.reader.read_buf(&mut buf) => {read_result?;},
-                _ = self.shutdown_token.cancelled() => {break;}
+                _ = self.shutdown_token.cancelled() => {info!("received shutdown signal");break;}
             }
             if buf.is_empty() {
+                info!("client closed connection");
                 return Ok(());
             }
 
             let (frames, halting_error) = match p.parse(&buf) {
                 ParseResult::Complete(f) => (f, None),
-                ParseResult::Partial(f, e) => (f, Some(e)),
+                ParseResult::Partial(f, e) => {
+                    warn!(?e, "closing connection due to parse error");
+                    (f, Some(e))
+                }
             };
 
             for f in frames {
                 let outcome: ProcessOutcome = match Command::try_from(f) {
                     Ok(cmd) => self.process_command(cmd).await,
                     Err(Error::UnknownCommand) => {
+                        warn!("unknown command");
                         ProcessOutcome::Respond(Frame::SimpleError("Unknown Command".into()))
                     }
                     Err(Error::WrongArity {
-                        command: _,
-                        given: _,
-                        expected: _,
-                    }) => ProcessOutcome::Respond(Frame::SimpleError(
-                        "Wrong number of arguments".into(),
-                    )),
+                        command,
+                        given,
+                        expected,
+                    }) => {
+                        warn!(command = %command, given = %given, expected = %expected, "wrong arity");
+                        ProcessOutcome::Respond(Frame::SimpleError(
+                            "Wrong number of arguments".into(),
+                        ))
+                    }
                     Err(Error::WrongArgumentType) => {
+                        warn!("wrong argument type");
                         ProcessOutcome::Respond(Frame::SimpleError("Wrong Argument Type".into()))
                     }
-                    Err(Error::Io(_e)) => return Ok(()),
-                    Err(Error::InvalidCommandFrame) => return Ok(()),
+                    Err(Error::Io(e)) => {
+                        warn!(%e, "closing connection due to io error");
+                        return Ok(());
+                    }
+                    Err(Error::InvalidCommandFrame) => {
+                        warn!("invalid command frame received");
+                        return Ok(());
+                    }
                 };
                 match outcome {
                     ProcessOutcome::Noop => continue,
                     ProcessOutcome::Quit => {
+                        info!("client requested quit");
                         return Ok(());
                     }
                     ProcessOutcome::Respond(r) => self.send_response(r).await?,
@@ -172,7 +209,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Arc,
+    };
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt, Sink, sink, split};
 
@@ -188,6 +228,10 @@ mod tests {
         std::sync::Arc::new(None)
     }
 
+    fn dummy_ip_address() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+    }
+
     fn setup_dummy_connection() -> Connection<tokio::io::Empty, Sink> {
         let store: Store = Store::new();
         Connection::new(
@@ -196,6 +240,7 @@ mod tests {
             store,
             dummy_shutdown_token(),
             dummy_auth_password(),
+            dummy_ip_address(),
         )
     }
 
@@ -685,8 +730,14 @@ mod tests {
             let (client, server) = tokio::io::duplex(128);
             let (reader, writer) = split(server);
             let store = Store::new();
-            let mut conn =
-                Connection::new(reader, writer, store, dummy_shutdown_token(), auth_password);
+            let mut conn = Connection::new(
+                reader,
+                writer,
+                store,
+                dummy_shutdown_token(),
+                auth_password,
+                dummy_ip_address(),
+            );
 
             let (reader, writer) = split(client);
             let reader = BufReader::new(reader);
@@ -707,6 +758,7 @@ mod tests {
                 store,
                 dummy_shutdown_token(),
                 dummy_auth_password(),
+                dummy_ip_address(),
             );
             conn.send_response(Frame::SimpleString("OK".into()))
                 .await
@@ -851,6 +903,7 @@ mod tests {
                 store,
                 dummy_shutdown_token(),
                 dummy_auth_password(),
+                dummy_ip_address(),
             );
 
             let (reader, writer) = split(client);
