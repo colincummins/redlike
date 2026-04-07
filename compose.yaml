@@ -1,0 +1,16 @@
+services:
+  server:
+    build:
+      context: .
+      target: final
+    ports:
+      - 6379:6379
+    environment:
+      - ADDRESS=0.0.0.0
+      - PORT=6379
+      - ARCHIVE_PATH=/data/archive
+    volumes:
+      - data:/data
+
+volumes:
+  data:
