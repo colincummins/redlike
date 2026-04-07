@@ -8,6 +8,9 @@ When configured with an authentication password, clients must successfully authe
 
 The project is covered by unit tests, including deterministic Tokio paused-time tests for expiration and TTL behavior.
 
+Docker and Compose usage, including archive persistence and the Docker smoke
+test workflow, are documented in [`README.Docker.md`](/home/colinc/redlike/README.Docker.md).
+
 # Running the Server
 
 By default, the server listens on `127.0.0.1:6379`.
