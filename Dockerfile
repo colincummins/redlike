@@ -59,7 +59,12 @@ RUN adduser \
     --no-create-home \
     --uid "${UID}" \
     appuser
+
+# Create directory for optional archive storage
+RUN mkdir /data && chown appuser:appuser /data
+
 USER appuser
+
 
 # Copy the executable from the "build" stage.
 COPY --from=build /bin/server /bin/
