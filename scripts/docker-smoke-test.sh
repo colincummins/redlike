@@ -1,2 +1,4 @@
 #!/usr/bin/env bash
-echo "Hello world"
+docker build -t redlike-smoke-test ../ &&\
+docker compose up --detach &&\
+docker compose down
