@@ -17,7 +17,7 @@ ARG APP_NAME
 WORKDIR /app
 
 # Install host build dependencies.
-RUN apk add --no-cache clang lld musl-dev git
+RUN apk add --no-cache clang lld musl-dev git 
 
 # Build the application.
 # Leverage a cache mount to /usr/local/cargo/registry/
@@ -51,6 +51,9 @@ FROM alpine:3.18 AS final
 # Create a non-privileged user that the app will run under.
 # See https://docs.docker.com/go/dockerfile-user-best-practices/
 ARG UID=10001
+
+RUN apk add --no-cache su-exec
+
 RUN adduser \
     --disabled-password \
     --gecos "" \
@@ -61,10 +64,7 @@ RUN adduser \
     appuser
 
 # Create directory for optional archive storage
-RUN mkdir /data && chown appuser:appuser /data
-
-USER appuser
-
+RUN mkdir /data 
 
 # Copy the executable from the "build" stage.
 COPY --from=build /bin/server /bin/
@@ -72,5 +72,8 @@ COPY --from=build /bin/server /bin/
 # Expose the port that the application listens on.
 EXPOSE 6379
 
+COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # What the container should run when it is started.
-ENTRYPOINT ["/bin/server"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
