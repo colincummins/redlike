@@ -24,3 +24,13 @@ target
 # Added by cargo
 
 /target
+
+# Terraform local working files and state
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
