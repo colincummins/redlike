@@ -1,0 +1,26 @@
+permissions:
+    id-token: write
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Server smoke test
+        run: ./scripts/docker-smoke-test.sh
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          aws-region: us-east-2
+          role-to-assume: ${{secrets.AWS_PUBLISH_ROLE}}
+        
