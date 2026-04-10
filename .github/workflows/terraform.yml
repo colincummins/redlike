@@ -1,0 +1,28 @@
+name: Terraform
+
+on:
+  push:
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Init registry module
+        working-directory: terraform/registry
+        run: terraform init -backend=false
+
+      - name: Validate registry module
+        working-directory: terraform/registry
+        run: terraform validate
