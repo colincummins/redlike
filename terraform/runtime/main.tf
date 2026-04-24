@@ -1,3 +1,4 @@
-resource "aws_ecs_cluster" "main" {
-  name = "redlike_cluster"
+resource "aws_ecs_cluster" "cluster" {
+  name = cluster_name
 }
+

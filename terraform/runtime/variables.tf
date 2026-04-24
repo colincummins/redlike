@@ -3,3 +3,9 @@ variable "aws_region" {
   type        = string
   default     = "us-west-2"
 }
+
+variable "cluster_name" {
+  description = "Name of the ECS cluster"
+  type        = string
+  default     = "redlike-cluster"
+}
