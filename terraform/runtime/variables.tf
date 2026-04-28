@@ -82,3 +82,21 @@ variable "app_port" {
   type        = number
   default     = 6379
 }
+
+variable "nlb_sg_name" {
+  description = "Name of the Network Load Balancer security group"
+  type        = string
+  default     = "redlike-nlb-sg"
+}
+
+variable "allowed_client_cidr_blocks" {
+  description = "Named CIDR blocks allowed to connect to the public NLB"
+  type        = map(string)
+  sensitive   = true
+}
+
+variable "app_sg_name" {
+  description = "Name of the security group for private app instances"
+  type        = string
+  default     = "redlike-app-sg"
+}

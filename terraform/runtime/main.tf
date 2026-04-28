@@ -11,7 +11,7 @@ resource "aws_subnet" "public1" {
   cidr_block        = var.public1_cidr_block
   availability_zone = var.public1_availability_zone
   tags = {
-    Name = "public1"
+    Name = "redlike-public-1"
   }
 }
 
@@ -20,7 +20,7 @@ resource "aws_subnet" "public2" {
   cidr_block        = var.public2_cidr_block
   availability_zone = var.public2_availability_zone
   tags = {
-    Name = "public2"
+    Name = "redlike-public-2"
   }
 }
 
@@ -30,7 +30,7 @@ resource "aws_subnet" "private1" {
   availability_zone = var.private1_availability_zone
 
   tags = {
-    Name = "private1"
+    Name = "redlike-private-1"
   }
 }
 
@@ -40,7 +40,7 @@ resource "aws_subnet" "private2" {
   availability_zone = var.private2_availability_zone
 
   tags = {
-    Name = "private2"
+    Name = "redlike-private-2"
   }
 }
 
@@ -79,6 +79,7 @@ resource "aws_lb" "main" {
   subnets            = [aws_subnet.public1.id, aws_subnet.public2.id]
   internal           = false
   load_balancer_type = "network"
+  security_groups    = [aws_security_group.nlb.id]
 
   tags = {
     Name = var.nlb_name
@@ -91,6 +92,11 @@ resource "aws_lb_target_group" "main" {
   port        = var.app_port
   vpc_id      = aws_vpc.main.id
   target_type = "ip"
+
+  health_check {
+    protocol = "TCP"
+    port     = "traffic-port"
+  }
 
   tags = {
     Name = var.nlb_target_group_name
@@ -106,4 +112,56 @@ resource "aws_lb_listener" "main" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.main.arn
   }
+}
+
+resource "aws_security_group" "nlb" {
+  name        = var.nlb_sg_name
+  description = "Allow whitelisted redis port tcp traffic through"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = var.nlb_sg_name
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "nlb_app_port" {
+  for_each = nonsensitive(toset(keys(var.allowed_client_cidr_blocks)))
+
+  security_group_id = aws_security_group.nlb.id
+  cidr_ipv4         = var.allowed_client_cidr_blocks[each.key]
+  ip_protocol       = "tcp"
+  from_port         = var.app_port
+  to_port           = var.app_port
+}
+
+resource "aws_vpc_security_group_egress_rule" "nlb_app_port" {
+  security_group_id = aws_security_group.nlb.id
+  cidr_ipv4         = var.vpc_cidr_block
+  ip_protocol       = "tcp"
+  from_port         = var.app_port
+  to_port           = var.app_port
+}
+
+resource "aws_security_group" "app" {
+  name        = var.app_sg_name
+  description = "Allow only traffic from the NLB"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = var.app_sg_name
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "app_from_nlb" {
+  security_group_id            = aws_security_group.app.id
+  referenced_security_group_id = aws_security_group.nlb.id
+  ip_protocol                  = "tcp"
+  from_port                    = var.app_port
+  to_port                      = var.app_port
+}
+
+resource "aws_vpc_security_group_egress_rule" "app_all" {
+  security_group_id = aws_security_group.app.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
 }
