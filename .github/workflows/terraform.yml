@@ -26,3 +26,11 @@ jobs:
       - name: Validate registry module
         working-directory: terraform/registry
         run: terraform validate
+
+      - name: Init runtime module
+        working-directory: terraform/runtime
+        run: terraform init -backend=false
+
+      - name: Validate runtime module
+        working-directory: terraform/runtime
+        run: terraform validate
