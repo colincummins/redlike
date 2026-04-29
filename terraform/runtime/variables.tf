@@ -100,3 +100,9 @@ variable "app_sg_name" {
   type        = string
   default     = "redlike-app-sg"
 }
+
+variable "cloudwatch_log_group_name" {
+  description = "Name of the ecs cloudwatch log group"
+  type        = string
+  default     = "ecs/redlike"
+}

@@ -199,3 +199,11 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   role       = aws_iam_role.ecs_task_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
+
+resource "aws_cloudwatch_log_group" "app" {
+  name              = var.cloudwatch_log_group_name
+  retention_in_days = 14
+  tags = {
+    Name = var.cloudwatch_log_group_name
+  }
+}
