@@ -136,3 +136,15 @@ variable "desired_count" {
   type        = number
   default     = 1
 }
+
+variable "efs_name" {
+  description = "Name of efs for persistent archive storage"
+  type        = string
+  default     = "redlike-efs"
+}
+
+variable "efs_sg_name" {
+  description = "Name of security group controlling app to efs"
+  type        = string
+  default     = "redlike-app-efs-sg"
+}

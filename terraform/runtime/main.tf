@@ -107,11 +107,12 @@ resource "aws_lb" "main" {
 }
 
 resource "aws_lb_target_group" "main" {
-  name        = var.nlb_target_group_name
-  protocol    = "TCP"
-  port        = var.app_port
-  vpc_id      = aws_vpc.main.id
-  target_type = "ip"
+  name                 = var.nlb_target_group_name
+  protocol             = "TCP"
+  port                 = var.app_port
+  vpc_id               = aws_vpc.main.id
+  target_type          = "ip"
+  deregistration_delay = 30
 
   health_check {
     protocol = "TCP"
@@ -309,6 +310,17 @@ resource "aws_ecs_task_definition" "app" {
   cpu                      = var.task_cpu
   memory                   = var.task_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  volume {
+    name = "redlike-data"
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.data.id
+      transit_encryption = "ENABLED"
+      authorization_config {
+        access_point_id = aws_efs_access_point.data.id
+        iam             = "DISABLED"
+      }
+    }
+  }
   container_definitions = jsonencode([
     {
       name      = "redlike-container"
@@ -329,6 +341,17 @@ resource "aws_ecs_task_definition" "app" {
         {
           name  = "PORT"
           value = tostring(var.app_port)
+        },
+        {
+          name  = "ARCHIVE_PATH"
+          value = "/data/archive"
+        }
+      ]
+      mountPoints = [
+        {
+          sourceVolume  = "redlike-data"
+          containerPath = "/data"
+          readOnly      = false
         }
       ]
       logConfiguration = {
@@ -344,8 +367,11 @@ resource "aws_ecs_task_definition" "app" {
 }
 
 resource "aws_ecs_service" "app" {
-  name            = var.service_name
-  depends_on      = [aws_lb_listener.main]
+  name = var.service_name
+  depends_on = [
+    aws_lb_listener.main,
+    aws_efs_mount_target.private1,
+  aws_efs_mount_target.private2]
   cluster         = aws_ecs_cluster.main.arn
   task_definition = aws_ecs_task_definition.app.arn
   launch_type     = "FARGATE"
@@ -359,5 +385,67 @@ resource "aws_ecs_service" "app" {
     security_groups = [aws_security_group.app.id]
     subnets         = [aws_subnet.private1.id, aws_subnet.private2.id]
   }
+}
+
+resource "aws_efs_file_system" "data" {
+  encrypted = true
+  tags = {
+    "Name" = var.efs_name
+  }
+}
+
+resource "aws_efs_mount_target" "private1" {
+  file_system_id  = aws_efs_file_system.data.id
+  subnet_id       = aws_subnet.private1.id
+  security_groups = [aws_security_group.app_efs.id]
+}
+
+resource "aws_efs_mount_target" "private2" {
+  file_system_id  = aws_efs_file_system.data.id
+  subnet_id       = aws_subnet.private2.id
+  security_groups = [aws_security_group.app_efs.id]
+}
+
+resource "aws_security_group" "app_efs" {
+  name   = var.efs_sg_name
+  vpc_id = aws_vpc.main.id
+  tags = {
+    "Name" = var.efs_sg_name
+  }
 
 }
+
+resource "aws_vpc_security_group_ingress_rule" "app_efs" {
+  security_group_id            = aws_security_group.app_efs.id
+  referenced_security_group_id = aws_security_group.app.id
+  ip_protocol                  = "tcp"
+  from_port                    = 2049
+  to_port                      = 2049
+}
+
+resource "aws_efs_access_point" "data" {
+  file_system_id = aws_efs_file_system.data.id
+
+  root_directory {
+    path = "/redlike"
+
+    creation_info {
+      owner_gid   = 10001
+      owner_uid   = 10001
+      permissions = "0755"
+    }
+  }
+
+  posix_user {
+    uid = 10001
+    gid = 10001
+  }
+
+  tags = {
+    Name = "redlike"
+  }
+
+}
+
+
+
