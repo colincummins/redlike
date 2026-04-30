@@ -120,3 +120,139 @@ Docker smoke testing runs in GitHub Actions via
 [`.github/workflows/docker.yml`](/home/colinc/redlike/.github/workflows/docker.yml).
 That workflow is separate from the Rust workflow so container checks stay
 independent from `cargo fmt`, `clippy`, and Rust test execution.
+
+## Example AWS Deployment
+
+The [`terraform/`](/home/colinc/redlike/terraform) directory contains an
+example AWS deployment. It is intended as a reference deployment rather than a
+drop-in production module. You should review the defaults, CIDR ranges, IAM
+permissions, image tag, and cost profile before applying it in your own AWS
+account.
+
+The Terraform is split into two stacks:
+
+* [`terraform/registry`](/home/colinc/redlike/terraform/registry) creates an
+  ECR repository for Redlike.
+* [`terraform/runtime`](/home/colinc/redlike/terraform/runtime) creates the
+  runtime infrastructure: VPC, public and private subnets, a public Network
+  Load Balancer, security groups, VPC endpoints, an ECS cluster, an ECS
+  Fargate task definition, an ECS service, and a CloudWatch log group.
+
+Both stacks are configured for Terraform Cloud workspaces. If you use a
+different backend, update the `terraform` blocks in each stack before running
+`terraform init`.
+
+The runtime stack runs the service in private subnets. It does not use a NAT
+gateway. Instead, it creates interface endpoints for ECR API, ECR Docker, and
+CloudWatch Logs, plus an S3 gateway endpoint so Fargate can pull ECR image
+layers and write logs without public outbound internet access.
+
+The public entrypoint is the Network Load Balancer DNS name exposed as the
+`app_endpoint` output. The NLB security group allows client traffic only from
+the CIDR blocks supplied through `allowed_client_cidr_blocks`.
+
+### Build and Push an Image
+
+The runtime task definition uses the `container_image` variable. Point it at an
+image that already exists in ECR, for example:
+
+```hcl
+container_image = "848973819276.dkr.ecr.us-west-2.amazonaws.com/redlike:main"
+```
+
+For repeatable deployments, prefer immutable tags such as Git SHAs:
+
+```bash
+GIT_SHA=$(git rev-parse --short HEAD)
+IMAGE="848973819276.dkr.ecr.us-west-2.amazonaws.com/redlike:git-$GIT_SHA"
+```
+
+The Dockerfile uses BuildKit features. If your Docker installation has the
+BuildKit plugin available, build and push with:
+
+```bash
+aws ecr get-login-password --region us-west-2 \
+  | docker login --username AWS --password-stdin 848973819276.dkr.ecr.us-west-2.amazonaws.com
+
+DOCKER_BUILDKIT=1 docker build -t "$IMAGE" .
+docker push "$IMAGE"
+```
+
+You can also use an existing ECR tag or digest and set `container_image` to
+that exact value.
+
+### Runtime Inputs
+
+Common values to change in [`terraform/runtime/variables.tf`](/home/colinc/redlike/terraform/runtime/variables.tf):
+
+* `aws_region`: AWS region for the runtime stack.
+* `container_image`: ECR image URI used by the ECS task definition.
+* `allowed_client_cidr_blocks`: named CIDR allowlist for clients that can
+  connect to the public NLB on the Redlike port.
+* `app_port`: TCP port exposed by Redlike. The default is `6379`.
+* `task_cpu` and `task_memory`: Fargate task size. The example defaults to
+  `256` CPU units and `512` MiB.
+* `desired_count`: number of Redlike ECS tasks to run. Set it to `0` to stop
+  running Fargate tasks while leaving the surrounding infrastructure in place.
+* `cluster_name`, `service_name`, `nlb_name`, and security group names:
+  resource names used in AWS.
+* VPC, subnet CIDR blocks, and availability zones: network layout for the
+  example VPC.
+
+Keep local values such as personal IP allowlists out of Git. One option is an
+ignored local file:
+
+```hcl
+# terraform/runtime/local.auto.tfvars
+allowed_client_cidr_blocks = {
+  home = "203.0.113.10/32"
+}
+
+container_image = "848973819276.dkr.ecr.us-west-2.amazonaws.com/redlike:main"
+```
+
+### Apply Order
+
+Create the ECR repository first:
+
+```bash
+cd terraform/registry
+terraform init
+terraform apply
+```
+
+Then build and push the container image, and apply the runtime stack:
+
+```bash
+cd terraform/runtime
+terraform init
+terraform apply
+```
+
+After the runtime apply completes, test the NLB endpoint with a RESP `PING`:
+
+```bash
+printf '*1\r\n$4\r\nPING\r\n' | nc -N "$(terraform output -raw app_endpoint)" 6379
+```
+
+Expected response:
+
+```text
++PONG
+```
+
+### Cost and Operations Notes
+
+The example uses ECS Fargate, a public Network Load Balancer, and three
+interface VPC endpoints. Those resources can incur charges while the stack
+exists. Scaling the ECS service to zero stops Fargate task CPU and memory
+charges, but the load balancer and interface endpoints can still cost money.
+
+The example runs one ECS task by default. To reduce Fargate task charges while
+leaving the surrounding infrastructure in place, apply with `desired_count = 0`.
+Set it back to `1` to start the service again.
+
+The runtime stack manages an `ecsTaskExecutionRole` with the AWS-managed
+`AmazonECSTaskExecutionRolePolicy`. If you already created that role outside
+Terraform, import it into the runtime workspace before applying so Terraform
+does not try to create a duplicate role.

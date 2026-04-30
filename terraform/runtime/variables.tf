@@ -110,18 +110,29 @@ variable "cloudwatch_log_group_name" {
 variable "container_image" {
   description = "ECS Container Image"
   type        = string
-  default     = "value848973819276.dkr.ecr.us-west-2.amazonaws.com/redlike:git-91e377f"
+  default     = "848973819276.dkr.ecr.us-west-2.amazonaws.com/redlike:main"
 }
 
 variable "task_cpu" {
   description = "ECS CPU"
-  type        = string
-  default     = "0.25vCPU"
+  type        = number
+  default     = 256
 }
 
 variable "task_memory" {
   description = "ECS Task Memory"
-  type        = string
-  default     = "512"
+  type        = number
+  default     = 512
 }
 
+variable "service_name" {
+  description = "ECS Service Name"
+  type        = string
+  default     = "redlike-service"
+}
+
+variable "desired_count" {
+  description = "Number of Redlike ECS tasks to run"
+  type        = number
+  default     = 1
+}

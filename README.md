@@ -11,6 +11,10 @@ The project is covered by unit tests, including deterministic Tokio paused-time 
 Docker and Compose usage, including archive persistence and the Docker smoke
 test workflow, are documented in [`README.Docker.md`](/home/colinc/redlike/README.Docker.md).
 
+Example AWS Terraform deployment files are also included under
+[`terraform/`](/home/colinc/redlike/terraform). They show one way to run
+Redlike on ECS Fargate behind a public Network Load Balancer.
+
 # Running the Server
 
 By default, the server listens on `127.0.0.1:6379`.

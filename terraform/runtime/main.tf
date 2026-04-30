@@ -1,5 +1,7 @@
 resource "aws_vpc" "main" {
-  cidr_block = var.vpc_cidr_block
+  cidr_block           = var.vpc_cidr_block
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
   tags = {
     Name = "redlike"
@@ -72,6 +74,24 @@ resource "aws_route_table_association" "public1" {
 resource "aws_route_table_association" "public2" {
   subnet_id      = aws_subnet.public2.id
   route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "private"
+  }
+}
+
+resource "aws_route_table_association" "private1" {
+  subnet_id      = aws_subnet.private1.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private2" {
+  subnet_id      = aws_subnet.private2.id
+  route_table_id = aws_route_table.private.id
 }
 
 resource "aws_lb" "main" {
@@ -166,6 +186,80 @@ resource "aws_vpc_security_group_egress_rule" "app_all" {
   ip_protocol       = "-1"
 }
 
+resource "aws_security_group" "vpc_endpoints" {
+  name        = "redlike-vpc-endpoints-sg"
+  description = "Allow ECS tasks to reach private AWS service endpoints"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = "redlike-vpc-endpoints-sg"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "vpc_endpoints_https_from_app" {
+  security_group_id            = aws_security_group.vpc_endpoints.id
+  referenced_security_group_id = aws_security_group.app.id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+}
+
+resource "aws_vpc_security_group_egress_rule" "vpc_endpoints_all" {
+  security_group_id = aws_security_group.vpc_endpoints.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_vpc_endpoint" "ecr_api" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private1.id, aws_subnet.private2.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "redlike-ecr-api"
+  }
+}
+
+resource "aws_vpc_endpoint" "ecr_dkr" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.ecr.dkr"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private1.id, aws_subnet.private2.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "redlike-ecr-dkr"
+  }
+}
+
+resource "aws_vpc_endpoint" "logs" {
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${var.aws_region}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private1.id, aws_subnet.private2.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "redlike-logs"
+  }
+}
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private.id]
+
+  tags = {
+    Name = "redlike-s3"
+  }
+}
+
 resource "aws_ecs_cluster" "main" {
   name = var.cluster_name
 
@@ -208,3 +302,62 @@ resource "aws_cloudwatch_log_group" "app" {
   }
 }
 
+resource "aws_ecs_task_definition" "app" {
+  family                   = "redlike"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.task_cpu
+  memory                   = var.task_memory
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  container_definitions = jsonencode([
+    {
+      name      = "redlike-container"
+      image     = var.container_image
+      essential = true
+      portMappings = [
+        {
+          containerPort = var.app_port
+          hostPort      = var.app_port
+          protocol      = "tcp"
+        }
+      ]
+      environment = [
+        {
+          name  = "ADDRESS"
+          value = "0.0.0.0"
+        },
+        {
+          name  = "PORT"
+          value = tostring(var.app_port)
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.app.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "redlike"
+        }
+      }
+    }
+  ])
+}
+
+resource "aws_ecs_service" "app" {
+  name            = var.service_name
+  depends_on      = [aws_lb_listener.main]
+  cluster         = aws_ecs_cluster.main.arn
+  task_definition = aws_ecs_task_definition.app.arn
+  launch_type     = "FARGATE"
+  desired_count   = var.desired_count
+  load_balancer {
+    container_name   = "redlike-container"
+    container_port   = var.app_port
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+  network_configuration {
+    security_groups = [aws_security_group.app.id]
+    subnets         = [aws_subnet.private1.id, aws_subnet.private2.id]
+  }
+
+}
