@@ -136,7 +136,8 @@ The Terraform is split into two stacks:
 * [`terraform/runtime`](/home/colinc/redlike/terraform/runtime) creates the
   runtime infrastructure: VPC, public and private subnets, a public Network
   Load Balancer, security groups, VPC endpoints, an ECS cluster, an ECS
-  Fargate task definition, an ECS service, and a CloudWatch log group.
+  Fargate task definition, an ECS service, a CloudWatch log group, and EFS
+  storage for archive persistence.
 
 Both stacks are configured for Terraform Cloud workspaces. If you use a
 different backend, update the `terraform` blocks in each stack before running
@@ -150,6 +151,11 @@ layers and write logs without public outbound internet access.
 The public entrypoint is the Network Load Balancer DNS name exposed as the
 `app_endpoint` output. The NLB security group allows client traffic only from
 the CIDR blocks supplied through `allowed_client_cidr_blocks`.
+
+The ECS task mounts EFS at `/data` and sets `ARCHIVE_PATH=/data/archive`, which
+matches the Compose persistence layout. When ECS stops a task during scale-down
+or deployment replacement, Redlike handles the shutdown signal and saves the
+archive to EFS. The next task loads the archive from the same path.
 
 ### Build and Push an Image
 
@@ -194,6 +200,8 @@ Common values to change in [`terraform/runtime/variables.tf`](/home/colinc/redli
   `256` CPU units and `512` MiB.
 * `desired_count`: number of Redlike ECS tasks to run. Set it to `0` to stop
   running Fargate tasks while leaving the surrounding infrastructure in place.
+* `efs_name` and `efs_sg_name`: names for the EFS file system and security
+  group used for archive persistence.
 * `cluster_name`, `service_name`, `nlb_name`, and security group names:
   resource names used in AWS.
 * VPC, subnet CIDR blocks, and availability zones: network layout for the
@@ -241,12 +249,24 @@ Expected response:
 +PONG
 ```
 
+To verify persistence, write a key, scale the service to zero, then scale it
+back to one and read the key again. The stopped task's CloudWatch log stream
+should include messages like:
+
+```text
+saving archive to path p=/data/archive
+archiving successful p=/data/archive
+```
+
+The replacement task should log that it loaded the archive on startup.
+
 ### Cost and Operations Notes
 
-The example uses ECS Fargate, a public Network Load Balancer, and three
-interface VPC endpoints. Those resources can incur charges while the stack
+The example uses ECS Fargate, a public Network Load Balancer, three interface
+VPC endpoints, and EFS. Those resources can incur charges while the stack
 exists. Scaling the ECS service to zero stops Fargate task CPU and memory
-charges, but the load balancer and interface endpoints can still cost money.
+charges, but the load balancer, interface endpoints, and EFS can still cost
+money.
 
 The example runs one ECS task by default. To reduce Fargate task charges while
 leaving the surrounding infrastructure in place, apply with `desired_count = 0`.
