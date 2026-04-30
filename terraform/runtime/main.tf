@@ -207,3 +207,4 @@ resource "aws_cloudwatch_log_group" "app" {
     Name = var.cloudwatch_log_group_name
   }
 }
+
