@@ -5,7 +5,7 @@ terraform {
     organization = "ColinCumminsCS"
 
     workspaces {
-      name = "redlike-registry"
+      name = "redlike-runtime"
     }
   }
 
